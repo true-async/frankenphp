@@ -78,4 +78,10 @@ void frankenphp_register_bulk(
 
 void register_extensions(zend_module_entry *m, int len);
 
+/* FrankenPHP Extension for TrueAsync support */
+int frankenphp_extension_init(void);
+zval *frankenphp_get_request_callback(void);
+void frankenphp_create_request_object(zval *return_value, uint64_t request_id);
+void frankenphp_create_response_object(zval *return_value, uint64_t request_id);
+
 #endif

@@ -593,6 +593,11 @@ PHP_MINIT_FUNCTION(frankenphp) {
     php_error(E_WARNING, "Failed to find built-in getenv function");
   }
 
+  // Initialize FrankenPHP extension (TrueAsync support)
+  if (frankenphp_extension_init() != SUCCESS) {
+    return FAILURE;
+  }
+
   return SUCCESS;
 }
 
