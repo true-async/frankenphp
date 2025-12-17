@@ -148,3 +148,45 @@ func go_async_get_request_uri(requestID C.uint64_t) *C.char {
 	}
 	return C.CString(uri)
 }
+
+//export go_async_get_request_header
+func go_async_get_request_header(requestID C.uint64_t, headerName *C.char) *C.char {
+	val, ok := asyncRequestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.env == nil {
+		return nil
+	}
+
+	name := C.GoString(headerName)
+	// HTTP headers in env are prefixed with HTTP_
+	envKey := "HTTP_" + name
+	value := ch.frankenPHPContext.env[envKey]
+	if value == "" {
+		return nil
+	}
+	return C.CString(value)
+}
+
+//export go_async_get_request_body
+func go_async_get_request_body(requestID C.uint64_t, length *C.size_t) *C.char {
+	val, ok := asyncRequestMap.Load(uint64(requestID))
+	if !ok {
+		*length = 0
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil {
+		*length = 0
+		return nil
+	}
+
+	// Read body from main context's request
+	// For now, return empty (TODO: implement body reading)
+	*length = 0
+	return nil
+}

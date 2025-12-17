@@ -20,6 +20,8 @@
 /* Forward declarations for CGO functions from Go */
 extern char *go_async_get_request_method(uint64_t request_id);
 extern char *go_async_get_request_uri(uint64_t request_id);
+extern char *go_async_get_request_header(uint64_t request_id, const char *header_name);
+extern char *go_async_get_request_body(uint64_t request_id, size_t *length);
 extern void go_async_notify_request_done(uint64_t request_id);
 
 /* Global callback storage for HttpServer::onRequest() */
@@ -178,28 +180,49 @@ PHP_METHOD(FrankenPHP_Request, getUri)
 PHP_METHOD(FrankenPHP_Request, getHeaders)
 {
     frankenphp_request_object *intern;
+    char *header_value;
+    const char *common_headers[] = {
+        "CONTENT_TYPE", "CONTENT_LENGTH", "HOST", "USER_AGENT",
+        "ACCEPT", "ACCEPT_ENCODING", "ACCEPT_LANGUAGE", "CONNECTION",
+        "COOKIE", "REFERER", "AUTHORIZATION", NULL
+    };
 
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
-    (void)intern; /* Unused until TODO implemented */
 
-    /* TODO: Get headers from Go via CGO */
+    /* Get headers from Go via CGO */
     array_init(return_value);
+
+    /* Iterate common headers */
+    for (int i = 0; common_headers[i] != NULL; i++) {
+        header_value = go_async_get_request_header(intern->request_id, common_headers[i]);
+        if (header_value != NULL) {
+            add_assoc_string(return_value, common_headers[i], header_value);
+            free(header_value);
+        }
+    }
 }
 
 /* Request::getBody(): string */
 PHP_METHOD(FrankenPHP_Request, getBody)
 {
     frankenphp_request_object *intern;
+    char *body;
+    size_t length = 0;
 
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
-    (void)intern; /* Unused until TODO implemented */
 
-    /* TODO: Get body from Go via CGO */
-    RETURN_EMPTY_STRING();
+    /* Get body from Go via CGO */
+    body = go_async_get_request_body(intern->request_id, &length);
+    if (body == NULL || length == 0) {
+        RETURN_EMPTY_STRING();
+    }
+
+    RETVAL_STRINGL(body, length);
+    free(body);
 }
 
 /* ============================================================================
