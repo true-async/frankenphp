@@ -6,8 +6,6 @@
  * - Register AsyncNotifier FD with TrueAsync poll events
  * - Create coroutines for each incoming request
  * - Suspend main coroutine to let event loop run
- *
- * Based on NGINX Unit's TrueAsync integration pattern.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -27,6 +25,10 @@
 #ifdef FRANKENPHP_TRUEASYNC
 #include "Zend/zend_async_API.h"
 
+/* Forward declarations for CGO functions from Go */
+extern void go_async_clear_notification(uintptr_t thread_index);
+extern uint64_t go_async_check_new_requests(uintptr_t thread_index);
+
 /* Thread-local storage for current thread index (needed by heartbeat handler) */
 __thread uintptr_t frankenphp_current_thread_index = 0;
 #endif
@@ -38,8 +40,6 @@ __thread uintptr_t frankenphp_current_thread_index = 0;
 /*
  * Loads the entrypoint.php script
  * This script calls HttpServer::onRequest($callback) to register the handler
- *
- * Pattern: /home/edmond/nginx-unit/src/nxt_php_sapi.c:2465-2533
  */
 int frankenphp_async_load_entrypoint(char *entrypoint_path)
 {
@@ -90,8 +90,6 @@ int frankenphp_async_load_entrypoint(char *entrypoint_path)
 
 /*
  * Activates the TrueAsync scheduler
- *
- * Pattern: /home/edmond/nginx-unit/src/nxt_php_sapi.c:2436-2445
  */
 bool frankenphp_activate_true_async(void)
 {
@@ -119,8 +117,6 @@ bool frankenphp_activate_true_async(void)
 /*
  * Callback invoked when AsyncNotifier FD becomes readable (SLOW PATH)
  * This is called by TrueAsync event loop when eventfd signals new request
- *
- * Pattern: /home/edmond/nginx-unit/src/nxt_php_sapi.c:558-567
  */
 #ifdef FRANKENPHP_TRUEASYNC
 static void frankenphp_async_check_requests_callback(
@@ -149,8 +145,6 @@ static void frankenphp_async_check_requests_callback(
 /*
  * Registers AsyncNotifier FD with TrueAsync poll events
  * Also registers FAST PATH - direct scheduler callback
- *
- * Pattern: /home/edmond/nginx-unit/src/nxt_php_sapi.c:574-626
  */
 bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_index)
 {
@@ -218,8 +212,6 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
 
 /*
  * Coroutine entry point - invokes user callback
- *
- * Pattern: /home/edmond/nginx-unit/src/nxt_php_extension.c:529-584
  */
 #ifdef FRANKENPHP_TRUEASYNC
 void frankenphp_request_coroutine_entry(void)
@@ -263,8 +255,6 @@ void frankenphp_request_coroutine_entry(void)
 
 /*
  * Creates a coroutine for handling an incoming request
- *
- * Pattern: /home/edmond/nginx-unit/src/nxt_php_sapi.c:2221-2304 (simplified)
  */
 void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index)
 {
@@ -323,10 +313,8 @@ static bool frankenphp_server_wait_event_dispose(zend_async_event_t *event) {
 /*
  * Suspends the main coroutine indefinitely
  * This allows the event loop to take over and handle requests
- *
- * Pattern: /home/edmond/nginx-unit/src/nxt_php_sapi.c:2412-2434
  */
-void frankenphp_suspend_main_coroutine(void)
+bool frankenphp_suspend_main_coroutine(void)
 {
 #ifdef FRANKENPHP_TRUEASYNC
     zend_coroutine_t *coroutine;
@@ -351,7 +339,9 @@ void frankenphp_suspend_main_coroutine(void)
     ZEND_ASYNC_SUSPEND();
 
     /* We never return from here - event loop runs until shutdown */
+    return true;
 #else
     php_error(E_ERROR, "FrankenPHP was not compiled with TrueAsync support");
+    return false;
 #endif
 }

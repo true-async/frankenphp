@@ -5,8 +5,6 @@
  * - FrankenPHP\HttpServer - register request handler callback
  * - FrankenPHP\Request - HTTP request object
  * - FrankenPHP\Response - HTTP response object
- *
- * Based on NGINX Unit's TrueAsync integration pattern.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -139,6 +137,7 @@ PHP_METHOD(FrankenPHP_Request, getMethod)
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    (void)intern; /* Unused until TODO implemented */
 
     /* TODO: Get method from Go via CGO */
     RETURN_STRING("GET");
@@ -152,6 +151,7 @@ PHP_METHOD(FrankenPHP_Request, getUri)
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    (void)intern; /* Unused until TODO implemented */
 
     /* TODO: Get URI from Go via CGO */
     RETURN_STRING("/");
@@ -165,6 +165,7 @@ PHP_METHOD(FrankenPHP_Request, getHeaders)
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    (void)intern; /* Unused until TODO implemented */
 
     /* TODO: Get headers from Go via CGO */
     array_init(return_value);
@@ -178,6 +179,7 @@ PHP_METHOD(FrankenPHP_Request, getBody)
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    (void)intern; /* Unused until TODO implemented */
 
     /* TODO: Get body from Go via CGO */
     RETURN_EMPTY_STRING();
@@ -198,6 +200,7 @@ PHP_METHOD(FrankenPHP_Response, setStatus)
     ZEND_PARSE_PARAMETERS_END();
 
     intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+    (void)intern; /* Unused until TODO implemented */
 
     /* TODO: Set status via Go CGO */
     SG(sapi_headers).http_response_code = (int)status_code;
@@ -215,6 +218,7 @@ PHP_METHOD(FrankenPHP_Response, setHeader)
     ZEND_PARSE_PARAMETERS_END();
 
     intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+    (void)intern; /* Unused until TODO implemented */
 
     /* TODO: Set header via Go CGO */
     sapi_header_line ctr = {0};

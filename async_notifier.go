@@ -10,7 +10,8 @@ import (
 	"fmt"
 	"runtime"
 	"syscall"
-	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // AsyncNotifier provides a way to wake up C event loop from Go goroutines
@@ -82,12 +83,12 @@ func createEventFD() (int, error) {
 
 // setNonBlocking sets O_NONBLOCK flag on a file descriptor
 func setNonBlocking(fd int) error {
-	flags, err := syscall.FcntlInt(uintptr(fd), syscall.F_GETFL, 0)
+	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
 		return err
 	}
 
-	_, err = syscall.FcntlInt(uintptr(fd), syscall.F_SETFL, flags|syscall.O_NONBLOCK)
+	_, err = unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags|unix.O_NONBLOCK)
 	return err
 }
 
