@@ -116,6 +116,20 @@ func handleRequestWithRegularPHPThreads(ch contextHolder) error {
 			select {
 			case thread.requestChan <- ch:
 				regularThreadMu.RUnlock()
+
+				// Check if thread is in async mode
+				if thread.asyncMode {
+					// Notify the event loop that a new request arrived
+					if thread.asyncNotifier != nil {
+						thread.asyncNotifier.Notify()
+					}
+					// Don't wait for completion in async mode
+					// The request will be handled asynchronously
+					metrics.StopRequest()
+					return nil
+				}
+
+				// Regular mode: wait for completion
 				<-ch.frankenPHPContext.done
 				metrics.StopRequest()
 
@@ -137,10 +151,29 @@ func handleRequestWithRegularPHPThreads(ch contextHolder) error {
 			queuedRegularThreads.Add(-1)
 			metrics.DequeuedRequest()
 
-			<-ch.frankenPHPContext.done
-			metrics.StopRequest()
+			// Check if any thread is in async mode
+			// In async mode, we don't wait for completion here
+			asyncMode := false
+			regularThreadMu.RLock()
+			for _, thread := range regularThreads {
+				if thread.asyncMode {
+					asyncMode = true
+					if thread.asyncNotifier != nil {
+						thread.asyncNotifier.Notify()
+					}
+					break
+				}
+			}
+			regularThreadMu.RUnlock()
 
+			if !asyncMode {
+				// Regular mode: wait for completion
+				<-ch.frankenPHPContext.done
+			}
+
+			metrics.StopRequest()
 			return nil
+
 		case scaleChan <- ch.frankenPHPContext:
 			// the request has triggered scaling, continue to wait for a thread
 		case <-timeoutChan(maxWaitTime):

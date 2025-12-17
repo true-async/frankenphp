@@ -312,8 +312,33 @@ func Init(options ...Option) error {
 	}
 
 	regularRequestChan = make(chan contextHolder)
+
+	// Initialize async threads if async mode is enabled
+	asyncThreadCount := 0
+	if opt.asyncMode {
+		asyncThreadCount = opt.asyncThreadCount
+		if asyncThreadCount > opt.numThreads-workerThreadCount {
+			Shutdown()
+			return fmt.Errorf("async thread count (%d) exceeds available threads (%d)", asyncThreadCount, opt.numThreads-workerThreadCount)
+		}
+
+		for i := 0; i < asyncThreadCount; i++ {
+			thread := getInactivePHPThread()
+			if err := convertToAsyncThread(thread, opt.asyncEntrypoint); err != nil {
+				Shutdown()
+				return fmt.Errorf("failed to create async thread: %w", err)
+			}
+			attachRegularThread(thread)
+
+			if globalLogger.Enabled(globalCtx, slog.LevelInfo) {
+				globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "TrueAsync thread created", slog.Int("thread_index", thread.threadIndex), slog.String("entrypoint", opt.asyncEntrypoint))
+			}
+		}
+	}
+
+	// Initialize remaining threads as regular threads
 	regularThreads = make([]*phpThread, 0, opt.numThreads-workerThreadCount)
-	for i := 0; i < opt.numThreads-workerThreadCount; i++ {
+	for i := asyncThreadCount; i < opt.numThreads-workerThreadCount; i++ {
 		convertToRegularThread(getInactivePHPThread())
 	}
 

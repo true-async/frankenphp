@@ -22,14 +22,17 @@ type WorkerOption func(*workerOpt) error
 type opt struct {
 	hotReloadOpt
 
-	ctx         context.Context
-	numThreads  int
-	maxThreads  int
-	workers     []workerOpt
-	logger      *slog.Logger
-	metrics     Metrics
-	phpIni      map[string]string
-	maxWaitTime time.Duration
+	ctx              context.Context
+	numThreads       int
+	maxThreads       int
+	workers          []workerOpt
+	logger           *slog.Logger
+	metrics          Metrics
+	phpIni           map[string]string
+	maxWaitTime      time.Duration
+	asyncMode        bool   // Enable TrueAsync mode
+	asyncEntrypoint  string // Entrypoint script for TrueAsync mode
+	asyncThreadCount int    // Number of async threads (default: 1)
 }
 
 type workerOpt struct {
@@ -241,6 +244,27 @@ func WithWorkerOnServerShutdown(f func()) WorkerOption {
 func withExtensionWorkers(w *extensionWorkers) WorkerOption {
 	return func(wo *workerOpt) error {
 		wo.extensionWorkers = w
+
+		return nil
+	}
+}
+
+// WithAsyncMode enables TrueAsync mode with PHP coroutines
+// entrypoint is the path to the PHP script that sets up async request handlers
+// threadCount specifies how many async threads to create (default: 1)
+func WithAsyncMode(entrypoint string, threadCount int) Option {
+	return func(o *opt) error {
+		if entrypoint == "" {
+			return fmt.Errorf("async entrypoint cannot be empty")
+		}
+
+		o.asyncMode = true
+		o.asyncEntrypoint = entrypoint
+
+		if threadCount <= 0 {
+			threadCount = 1
+		}
+		o.asyncThreadCount = threadCount
 
 		return nil
 	}
