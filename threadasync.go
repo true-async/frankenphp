@@ -49,9 +49,8 @@ func (handler *asyncThread) beforeScriptExecution() string {
 		return handler.entrypoint
 
 	case state.Ready:
-		// Script is already loaded, return empty to signal event loop continuation
-		// The C event loop will handle coroutine scheduling
-		return ""
+		// Entrypoint loaded, now setup TrueAsync and suspend
+		return handler.setupAsyncMode()
 
 	case state.ShuttingDown:
 		// Signal shutdown
@@ -59,6 +58,13 @@ func (handler *asyncThread) beforeScriptExecution() string {
 	}
 
 	panic("unexpected state: " + handler.state.Name())
+}
+
+// setupAsyncMode initializes TrueAsync integration and suspends main coroutine
+func (handler *asyncThread) setupAsyncMode() string {
+	// This will be called from C via CGO
+	// Implementation will be in frankenphp_trueasync.go with build tags
+	return ""
 }
 
 // afterScriptExecution is called after the entrypoint finishes

@@ -26,6 +26,9 @@
 /* TrueAsync headers - will be available when compiled with -tags trueasync */
 #ifdef FRANKENPHP_TRUEASYNC
 #include "Zend/zend_async_API.h"
+
+/* Thread-local storage for current thread index (needed by heartbeat handler) */
+__thread uintptr_t frankenphp_current_thread_index = 0;
 #endif
 
 /* ============================================================================
@@ -154,6 +157,9 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
 #ifdef FRANKENPHP_TRUEASYNC
     zend_async_poll_event_t *poll_event;
     uintptr_t *extra_data;
+
+    /* Store thread_index in thread-local storage for heartbeat handler */
+    frankenphp_current_thread_index = thread_index;
 
     if (notifier_fd < 0) {
         php_error(E_ERROR, "Invalid AsyncNotifier FD: %d", notifier_fd);
@@ -308,8 +314,9 @@ static bool frankenphp_server_wait_event_stop(zend_async_event_t *event) {
     return false;
 }
 
-static void frankenphp_server_wait_event_dispose(zend_async_event_t *event) {
+static bool frankenphp_server_wait_event_dispose(zend_async_event_t *event) {
     efree(event);
+    return true;
 }
 #endif
 
