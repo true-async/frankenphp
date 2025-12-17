@@ -110,3 +110,41 @@ func go_async_clear_context_holder(threadIndex C.uintptr_t) {
 	}
 	thread.handlerMu.Unlock()
 }
+
+//export go_async_get_request_method
+func go_async_get_request_method(requestID C.uint64_t) *C.char {
+	val, ok := asyncRequestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.env == nil {
+		return nil
+	}
+
+	method := ch.frankenPHPContext.env["REQUEST_METHOD"]
+	if method == "" {
+		return C.CString("GET")
+	}
+	return C.CString(method)
+}
+
+//export go_async_get_request_uri
+func go_async_get_request_uri(requestID C.uint64_t) *C.char {
+	val, ok := asyncRequestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.env == nil {
+		return nil
+	}
+
+	uri := ch.frankenPHPContext.env["REQUEST_URI"]
+	if uri == "" {
+		return C.CString("/")
+	}
+	return C.CString(uri)
+}

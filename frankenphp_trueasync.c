@@ -263,14 +263,9 @@ void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index
     zend_coroutine_t *coroutine;
 
     /* Create new scope for this coroutine (for coroutine isolation)
-     * Note: We do NOT isolate superglobals - they are populated normally
+     * Note: Superglobals are populated via standard SAPI mechanisms
      */
     request_scope = ZEND_ASYNC_NEW_SCOPE(ZEND_ASYNC_CURRENT_SCOPE);
-
-    /* TODO: Populate superglobals for this request
-     * Call go_async_populate_superglobals(request_id)
-     * This fills $_GET, $_POST, $_SERVER, etc. from Go context
-     */
 
     /* Create coroutine within this scope */
     coroutine = ZEND_ASYNC_NEW_COROUTINE(request_scope);

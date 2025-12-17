@@ -17,6 +17,11 @@
 #include "SAPI.h"
 #include "frankenphp.h"
 
+/* Forward declarations for CGO functions from Go */
+extern char *go_async_get_request_method(uint64_t request_id);
+extern char *go_async_get_request_uri(uint64_t request_id);
+extern void go_async_notify_request_done(uint64_t request_id);
+
 /* Global callback storage for HttpServer::onRequest() */
 static zval *frankenphp_request_callback = NULL;
 
@@ -133,28 +138,40 @@ PHP_METHOD(FrankenPHP_HttpServer, onRequest)
 PHP_METHOD(FrankenPHP_Request, getMethod)
 {
     frankenphp_request_object *intern;
+    char *method;
 
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
-    (void)intern; /* Unused until TODO implemented */
 
-    /* TODO: Get method from Go via CGO */
-    RETURN_STRING("GET");
+    /* Get method from Go via CGO */
+    method = go_async_get_request_method(intern->request_id);
+    if (method == NULL) {
+        RETURN_STRING("GET");
+    }
+
+    RETVAL_STRING(method);
+    free(method);
 }
 
 /* Request::getUri(): string */
 PHP_METHOD(FrankenPHP_Request, getUri)
 {
     frankenphp_request_object *intern;
+    char *uri;
 
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
-    (void)intern; /* Unused until TODO implemented */
 
-    /* TODO: Get URI from Go via CGO */
-    RETURN_STRING("/");
+    /* Get URI from Go via CGO */
+    uri = go_async_get_request_uri(intern->request_id);
+    if (uri == NULL) {
+        RETURN_STRING("/");
+    }
+
+    RETVAL_STRING(uri);
+    free(uri);
 }
 
 /* Request::getHeaders(): array */
@@ -268,7 +285,8 @@ PHP_METHOD(FrankenPHP_Response, end)
         intern->headers_sent = 1;
     }
 
-    /* TODO: Call go_async_notify_request_done(intern->request_id) */
+    /* Notify Go that request is complete */
+    go_async_notify_request_done(intern->request_id);
 }
 
 /* ============================================================================
