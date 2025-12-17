@@ -1,13 +1,12 @@
-//go:build trueasync
-
 package frankenphp
 
-// #cgo trueasync CFLAGS: -DFRANKENPHP_TRUEASYNC -I/usr/local/include/php -I/usr/local/include/php/main -I/usr/local/include/php/TSRM -I/usr/local/include/php/Zend -I/usr/local/include/php/ext
-// #cgo trueasync LDFLAGS: -L/usr/local/lib -lphp
+// #cgo CFLAGS: -DFRANKENPHP_TRUEASYNC
 // #include "frankenphp.h"
-// #include "frankenphp_extension.c"
-// #include "frankenphp_trueasync.c"
 // #include "Zend/zend_async_API.h"
+//
+// // Forward declarations for Go exported functions
+// extern uint64_t go_async_check_new_requests(uintptr_t thread_index);
+// extern void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index);
 //
 // // FAST PATH: Heartbeat handler called on every coroutine switch
 // // Must be SUPER FAST - just non-blocking check of Go channel
