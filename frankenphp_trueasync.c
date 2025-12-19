@@ -26,7 +26,6 @@ extern __thread bool is_async_mode_requested;
 extern __thread zval *async_request_callback;
 
 /* TrueAsync headers - will be available when compiled with -tags trueasync */
-#ifdef FRANKENPHP_TRUEASYNC
 #include "Zend/zend_async_API.h"
 
 /* Forward declarations for CGO functions from Go */
@@ -35,7 +34,6 @@ extern uint64_t go_async_check_new_requests(uintptr_t thread_index);
 
 /* Thread-local storage for current thread index (needed by heartbeat handler) */
 __thread uintptr_t frankenphp_current_thread_index = 0;
-#endif
 
 /* ============================================================================
  * 1. Auto-detection and Activation of Async Mode
@@ -95,7 +93,6 @@ void frankenphp_activate_async_mode(uintptr_t thread_index)
  */
 int frankenphp_async_load_entrypoint(char *entrypoint_path)
 {
-#ifdef FRANKENPHP_TRUEASYNC
     zend_file_handle file_handle;
     int ret;
 
@@ -130,10 +127,6 @@ int frankenphp_async_load_entrypoint(char *entrypoint_path)
     }
 
     return ret;
-#else
-    php_error(E_ERROR, "FrankenPHP was not compiled with TrueAsync support");
-    return FAILURE;
-#endif
 }
 
 /* ============================================================================
@@ -145,7 +138,6 @@ int frankenphp_async_load_entrypoint(char *entrypoint_path)
  */
 bool frankenphp_activate_true_async(void)
 {
-#ifdef FRANKENPHP_TRUEASYNC
     /* Check if TrueAsync extension is loaded */
     if (!ZEND_ASYNC_IS_READY) {
         php_error(E_ERROR, "TrueAsync extension is not loaded");
@@ -156,10 +148,6 @@ bool frankenphp_activate_true_async(void)
     ZEND_ASYNC_SCHEDULER_LAUNCH();
 
     return ZEND_ASYNC_IS_ACTIVE;
-#else
-    php_error(E_ERROR, "FrankenPHP was not compiled with TrueAsync support");
-    return false;
-#endif
 }
 
 /* ============================================================================
@@ -170,7 +158,6 @@ bool frankenphp_activate_true_async(void)
  * Callback invoked when AsyncNotifier FD becomes readable (SLOW PATH)
  * This is called by TrueAsync event loop when eventfd signals new request
  */
-#ifdef FRANKENPHP_TRUEASYNC
 static void frankenphp_async_check_requests_callback(
     zend_async_event_t *event,
     zend_async_event_callback_t *callback,
@@ -192,7 +179,6 @@ static void frankenphp_async_check_requests_callback(
         frankenphp_handle_request_async(request_id, thread_index);
     }
 }
-#endif
 
 /*
  * Registers AsyncNotifier FD with TrueAsync poll events
@@ -200,7 +186,6 @@ static void frankenphp_async_check_requests_callback(
  */
 bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_index)
 {
-#ifdef FRANKENPHP_TRUEASYNC
     zend_async_poll_event_t *poll_event;
     uintptr_t *extra_data;
 
@@ -252,10 +237,6 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
      */
 
     return true;
-#else
-    php_error(E_ERROR, "FrankenPHP was not compiled with TrueAsync support");
-    return false;
-#endif
 }
 
 /* ============================================================================
@@ -265,7 +246,6 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
 /*
  * Coroutine entry point - invokes user callback
  */
-#ifdef FRANKENPHP_TRUEASYNC
 void frankenphp_request_coroutine_entry(void)
 {
     zend_coroutine_t *coroutine;
@@ -303,14 +283,12 @@ void frankenphp_request_coroutine_entry(void)
     zval_ptr_dtor(&request_obj);
     zval_ptr_dtor(&response_obj);
 }
-#endif
 
 /*
  * Creates a coroutine for handling an incoming request
  */
 void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index)
 {
-#ifdef FRANKENPHP_TRUEASYNC
     zend_async_scope_t *request_scope;
     zend_coroutine_t *coroutine;
 
@@ -326,10 +304,6 @@ void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index
 
     /* Enqueue coroutine for execution */
     ZEND_ASYNC_ENQUEUE_COROUTINE(coroutine);
-
-#else
-    php_error(E_ERROR, "FrankenPHP was not compiled with TrueAsync support");
-#endif
 }
 
 /* ============================================================================
@@ -340,7 +314,6 @@ void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index
  * Event methods for the "wait event" that never fires
  * This keeps the main coroutine suspended indefinitely
  */
-#ifdef FRANKENPHP_TRUEASYNC
 static bool frankenphp_server_wait_event_start(zend_async_event_t *event) {
     /* Do nothing - event never becomes ready */
     return false;
@@ -355,7 +328,6 @@ static bool frankenphp_server_wait_event_dispose(zend_async_event_t *event) {
     efree(event);
     return true;
 }
-#endif
 
 /*
  * Suspends the main coroutine indefinitely
@@ -363,7 +335,6 @@ static bool frankenphp_server_wait_event_dispose(zend_async_event_t *event) {
  */
 bool frankenphp_suspend_main_coroutine(void)
 {
-#ifdef FRANKENPHP_TRUEASYNC
     zend_coroutine_t *coroutine;
     zend_async_event_t *event;
 
@@ -387,8 +358,4 @@ bool frankenphp_suspend_main_coroutine(void)
 
     /* We never return from here - event loop runs until shutdown */
     return true;
-#else
-    php_error(E_ERROR, "FrankenPHP was not compiled with TrueAsync support");
-    return false;
-#endif
 }
