@@ -140,6 +140,16 @@ func tearDownWorkerScript(handler *workerThread, exitStatus int) {
 		handler.workerContext = nil
 	}
 
+	// Check if async mode was requested during first script execution
+	if handler.isBootingScript && exitStatus == 0 {
+		if C.frankenphp_check_async_mode_requested(C.uintptr_t(handler.thread.threadIndex)) {
+			// Worker used HttpServer::onRequest() - activate async mode
+			C.frankenphp_activate_async_mode(C.uintptr_t(handler.thread.threadIndex))
+			// Async mode activated, worker will be managed by event loop
+			return
+		}
+	}
+
 	// on exit status 0 we just run the worker script again
 	if exitStatus == 0 && !handler.isBootingScript {
 		metrics.StopWorker(worker.name, StopReasonRestart)

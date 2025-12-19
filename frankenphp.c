@@ -74,6 +74,10 @@ __thread uintptr_t thread_index;
 __thread bool is_worker_thread = false;
 __thread zval *os_environment = NULL;
 
+/* TLS for async mode detection */
+__thread bool is_async_mode_requested = false;
+__thread zval *async_request_callback = NULL;
+
 void frankenphp_update_local_thread_context(bool is_worker) {
   is_worker_thread = is_worker;
 }

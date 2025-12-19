@@ -21,6 +21,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+/* External TLS variables from frankenphp.c */
+extern __thread bool is_async_mode_requested;
+extern __thread zval *async_request_callback;
+
 /* TrueAsync headers - will be available when compiled with -tags trueasync */
 #ifdef FRANKENPHP_TRUEASYNC
 #include "Zend/zend_async_API.h"
@@ -34,7 +38,55 @@ __thread uintptr_t frankenphp_current_thread_index = 0;
 #endif
 
 /* ============================================================================
- * 1. Load Entrypoint Script
+ * 1. Auto-detection and Activation of Async Mode
+ * ============================================================================ */
+
+/*
+ * Checks if async mode was requested via HttpServer::onRequest()
+ * Called from Go after first script execution to determine if worker should activate async mode
+ */
+bool frankenphp_check_async_mode_requested(uintptr_t thread_index)
+{
+    /* Simply return the TLS flag value set by HttpServer::onRequest() */
+    return is_async_mode_requested;
+}
+
+/*
+ * Activates async mode for this worker thread
+ * Called from Go when worker script uses HttpServer::onRequest()
+ * Transitions from blocking worker mode to async event loop mode
+ */
+void frankenphp_activate_async_mode(uintptr_t thread_index)
+{
+    /* Store thread_index in TLS for heartbeat handler */
+    frankenphp_current_thread_index = thread_index;
+
+    /* Verify that callback was registered */
+    if (async_request_callback == NULL) {
+        php_error(E_ERROR, "Cannot activate async mode: no callback registered");
+        return;
+    }
+
+    /* Activate TrueAsync scheduler */
+    if (!frankenphp_activate_true_async()) {
+        php_error(E_ERROR, "Failed to activate TrueAsync scheduler");
+        return;
+    }
+
+    /* TODO: Register AsyncNotifier FD with event loop
+     * We need to get the eventfd from Go via CGO call
+     * int notifier_fd = go_async_get_notifier_fd(thread_index);
+     * frankenphp_register_async_notifier_event(notifier_fd, thread_index);
+     */
+
+    /* Suspend main coroutine - event loop takes over */
+    frankenphp_suspend_main_coroutine();
+
+    /* We never return from here - event loop runs until shutdown */
+}
+
+/* ============================================================================
+ * 2. Load Entrypoint Script
  * ============================================================================ */
 
 /*

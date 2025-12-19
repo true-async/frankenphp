@@ -24,6 +24,10 @@ extern char *go_async_get_request_header(uint64_t request_id, const char *header
 extern char *go_async_get_request_body(uint64_t request_id, size_t *length);
 extern void go_async_notify_request_done(uint64_t request_id);
 
+/* TLS variables from frankenphp.c */
+extern __thread bool is_async_mode_requested;
+extern __thread zval *async_request_callback;
+
 /* Global callback storage for HttpServer::onRequest() */
 static zval *frankenphp_request_callback = NULL;
 
@@ -128,6 +132,17 @@ PHP_METHOD(FrankenPHP_HttpServer, onRequest)
     /* Store new callback */
     frankenphp_request_callback = emalloc(sizeof(zval));
     ZVAL_COPY(frankenphp_request_callback, callback);
+
+    /* Also store in TLS for this thread */
+    if (async_request_callback != NULL) {
+        zval_ptr_dtor(async_request_callback);
+        efree(async_request_callback);
+    }
+    async_request_callback = emalloc(sizeof(zval));
+    ZVAL_COPY(async_request_callback, callback);
+
+    /* Mark this thread as async mode requested */
+    is_async_mode_requested = true;
 
     RETURN_TRUE;
 }
