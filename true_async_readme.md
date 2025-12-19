@@ -68,6 +68,54 @@ HttpServer::onRequest(function (Request $req, Response $res) {
 });
 ```
 
+## Debugging with Delve
+
+### Problem: DWARF v5 Compatibility
+
+Go 1.25+ generates debug info using DWARF v5, but Delve needs to be built with Go 1.25.0+ to support it. If you see:
+
+```
+To debug executables using DWARFv5 or later Delve must be built with Go version 1.25.0 or later
+```
+
+### Solution: Build with DWARF v4
+
+```bash
+# In testcmd directory
+GOEXPERIMENT=nodwarf5 bash build.sh
+
+# Or for one-off builds
+GOEXPERIMENT=nodwarf5 go build -tags nowatcher -o testcmd
+```
+
+### Install Delve
+
+```bash
+# Install delve
+go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Add to PATH (add to ~/.bashrc for persistence)
+export PATH=$PATH:~/go/bin
+```
+
+### Using Delve
+
+```bash
+cd /home/edmond/frankenphp/testcmd
+
+# Interactive debugging
+dlv exec ./testcmd
+
+# Common commands:
+# break main.main    - set breakpoint
+# continue (c)       - run program
+# next (n)           - next line
+# step (s)           - step into function
+# print var (p var)  - print variable
+# locals             - show local variables
+# quit (q)           - exit
+```
+
 ## Common Issues
 
 **undefined reference to tsrm_*** - PHP built with `=shared`, rebuild without it
@@ -75,3 +123,5 @@ HttpServer::onRequest(function (Request $req, Response $res) {
 **multiple definition** - Remove `#include "*.c"` from .go files
 
 **xdebug warning** - Comment out xdebug in `/usr/local/lib/php.ini`
+
+**DWARF v5 error in Delve** - Build with `GOEXPERIMENT=nodwarf5`
