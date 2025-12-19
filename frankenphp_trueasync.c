@@ -300,9 +300,7 @@ void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index
     coroutine->extended_data = (void *)(uintptr_t)request_id;
 
     /* Enqueue coroutine for execution */
-    if (!ZEND_ASYNC_ENQUEUE_COROUTINE(coroutine)) {
-
-    }
+    ZEND_ASYNC_ENQUEUE_COROUTINE(coroutine);
 }
 
 /* ============================================================================
