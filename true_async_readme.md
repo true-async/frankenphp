@@ -24,36 +24,50 @@ nm /usr/local/lib/libphp.so | grep " T tsrm_mutex_lock"
 
 ## Build FrankenPHP
 
-### Main HTTP Server
+### Quick Build (Recommended)
+
+```bash
+cd /home/edmond/frankenphp
+./build.sh
+```
+
+The `build.sh` script automatically configures CGO flags and builds with `trueasync` and `nowatcher` tags.
+
+### Manual Build
 
 ```bash
 cd /home/edmond/frankenphp
 export CGO_CFLAGS="$(php-config --includes)"
-export CGO_LDFLAGS="-L/usr/local/lib -lphp"
-
-cd caddy/frankenphp
-go build -tags nowatcher -o ../../frankenphp
-```
-
-### Test Program (TrueAsync)
-
-```bash
-cd /home/edmond/frankenphp/testcmd
-go build -tags nowatcher -o testcmd
-./testcmd
+export CGO_LDFLAGS="$(php-config --ldflags) $(php-config --libs)"
+go build -tags "trueasync,nowatcher" -o frankenphp
 ```
 
 ## TrueAsync Usage
 
-### Go API
+### Auto-detection (Worker Mode)
 
-```go
-frankenphp.Init(
-    frankenphp.WithAsyncMode("/path/to/entrypoint.php", 1)
-)
+TrueAsync mode is **automatically activated** when a worker script uses `HttpServer::onRequest()`. No manual configuration needed!
+
+**Caddyfile:**
+
+```caddyfile
+{
+    frankenphp {
+        num_threads 4
+        worker {
+            file examples/async_entrypoint.php
+            num 2
+        }
+    }
+}
+
+:8080 {
+    root * examples
+    php_server
+}
 ```
 
-### Entrypoint PHP
+**PHP Worker Script (examples/async_entrypoint.php):**
 
 ```php
 <?php
@@ -61,11 +75,39 @@ use FrankenPHP\HttpServer;
 use FrankenPHP\Request;
 use FrankenPHP\Response;
 
+// When HttpServer::onRequest() is called, async mode activates automatically
 HttpServer::onRequest(function (Request $req, Response $res) {
-    $res->setStatus(200);
-    $res->write("Hello from TrueAsync!");
-    $res->end();
+    $uri = $req->getUri();
+
+    if ($uri === '/') {
+        $res->setStatus(200);
+        $res->setHeader('Content-Type', 'application/json');
+        $res->write(json_encode([
+            'message' => 'Hello from TrueAsync!',
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        $res->end();
+    } else {
+        $res->setStatus(404);
+        $res->write(json_encode(['error' => 'Not Found']));
+        $res->end();
+    }
 });
+```
+
+**Run:**
+
+```bash
+./frankenphp run --config Caddyfile.test
+curl http://localhost:8080/
+```
+
+### Manual Go API (Advanced)
+
+```go
+frankenphp.Init(
+    frankenphp.WithAsyncMode("/path/to/entrypoint.php", 1)
+)
 ```
 
 ## Debugging with Delve
