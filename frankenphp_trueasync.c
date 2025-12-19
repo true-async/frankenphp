@@ -61,7 +61,7 @@ void frankenphp_activate_async_mode(uintptr_t thread_index)
 
     /* Verify that callback was registered */
     if (async_request_callback == NULL) {
-        php_error(E_ERROR, "Cannot activate async mode: no callback registered");
+        php_error(E_ERROR, "Cannot activate async mode: no callback registered. Please use FrankenPHP\\HttpServer::onRequest()");
         return;
     }
 
@@ -289,21 +289,20 @@ void frankenphp_request_coroutine_entry(void)
  */
 void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index)
 {
-    zend_async_scope_t *request_scope;
-    zend_coroutine_t *coroutine;
-
     /* Create new scope for this coroutine (for coroutine isolation)
      * Note: Superglobals are populated via standard SAPI mechanisms
      */
-    request_scope = ZEND_ASYNC_NEW_SCOPE(ZEND_ASYNC_CURRENT_SCOPE);
+    zend_async_scope_t *request_scope = ZEND_ASYNC_NEW_SCOPE(ZEND_ASYNC_CURRENT_SCOPE);
 
     /* Create coroutine within this scope */
-    coroutine = ZEND_ASYNC_NEW_COROUTINE(request_scope);
+    zend_coroutine_t * coroutine = ZEND_ASYNC_NEW_COROUTINE(request_scope);
     coroutine->internal_entry = frankenphp_request_coroutine_entry;
     coroutine->extended_data = (void *)(uintptr_t)request_id;
 
     /* Enqueue coroutine for execution */
-    ZEND_ASYNC_ENQUEUE_COROUTINE(coroutine);
+    if (!ZEND_ASYNC_ENQUEUE_COROUTINE(coroutine)) {
+
+    }
 }
 
 /* ============================================================================
