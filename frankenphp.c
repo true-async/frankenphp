@@ -991,6 +991,8 @@ static void *php_main(void *arg) {
 #endif
 #endif
 
+  zend_signal_startup();
+
   sapi_startup(&frankenphp_sapi_module);
 
 #ifdef ZEND_MAX_EXECUTION_TIMERS
