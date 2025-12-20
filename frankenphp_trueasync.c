@@ -66,6 +66,12 @@ void frankenphp_enter_async_mode(void)
         return;
     }
 
+    // 1. We need to get a special socket from the Go thread
+    // that will wake us up when new requests arrive.
+
+    // 2. Call frankenphp_register_request_notifier
+
+    // 3. Now we are ready to activate the asynchronous mode.
     if (!frankenphp_activate_true_async()) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to activate TrueAsync scheduler");
         return;
@@ -105,13 +111,11 @@ static void frankenphp_async_check_requests_callback(
     /* Extract thread_index from event extra data */
     thread_index = *(uintptr_t *)((char *)event + event->extra_offset);
 
-    /* Clear the eventfd notification */
     go_async_clear_notification(thread_index);
 
     /* Check for new requests from Go channel (may return multiple) */
     while ((request_id = go_async_check_new_requests(thread_index)) != 0) {
-        /* Create coroutine for this request */
-        frankenphp_handle_request_async(request_id, thread_index);
+        frankenphp_handle_request_async(request_id);
     }
 }
 
@@ -205,19 +209,23 @@ void frankenphp_request_coroutine_entry(void)
 /*
  * Creates a coroutine for handling an incoming request
  */
-void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index)
+void frankenphp_handle_request_async(uint64_t request_id)
 {
-    /* Create new scope for this coroutine (for coroutine isolation)
-     * Note: Superglobals are populated via standard SAPI mechanisms
-     */
+    // Create new scope for this coroutine (for coroutine isolation)
     zend_async_scope_t *request_scope = ZEND_ASYNC_NEW_SCOPE(ZEND_ASYNC_CURRENT_SCOPE);
+    if (UNEXPECTED(request_scope == NULL)) {
+        return;
+    }
 
     /* Create coroutine within this scope */
     zend_coroutine_t * coroutine = ZEND_ASYNC_NEW_COROUTINE(request_scope);
+    if (UNEXPECTED(coroutine == NULL)) {
+        return;
+    }
+
     coroutine->internal_entry = frankenphp_request_coroutine_entry;
     coroutine->extended_data = (void *)(uintptr_t)request_id;
 
-    /* Enqueue coroutine for execution */
     ZEND_ASYNC_ENQUEUE_COROUTINE(coroutine);
 }
 
