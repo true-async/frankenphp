@@ -117,6 +117,7 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 func (aw *asyncWorker) handleRequestAsync(ch contextHolder) error {
 	metrics.StartWorkerRequest(aw.name)
 
+    // A simple Round Robin algorithm for testing
 	start := aw.rrIndex.Add(1) % uint32(len(aw.threads))
 
 	for i := 0; i < len(aw.threads); i++ {
@@ -126,6 +127,8 @@ func (aw *asyncWorker) handleRequestAsync(ch contextHolder) error {
 		select {
 		case thread.requestChan <- ch:
 			if len(thread.requestChan) == 1 && thread.asyncNotifier != nil {
+			    // If the channel was empty, the thread may be waiting for new messages,
+			    // paused in the EventLoop, so we must write a new message to the asyncNotifier.
 				thread.asyncNotifier.Notify()
 			}
 			return nil
