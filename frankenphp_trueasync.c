@@ -110,14 +110,14 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
     frankenphp_current_thread_index = thread_index;
 
     if (notifier_fd < 0) {
-        php_error(E_ERROR, "Invalid AsyncNotifier FD: %d", notifier_fd);
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Invalid AsyncNotifier FD: %d", notifier_fd);
         return false;
     }
 
     /* Set FD to non-blocking mode */
     int flags = fcntl(notifier_fd, F_GETFL, 0);
     if (flags == -1 || fcntl(notifier_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-        php_error(E_ERROR, "Failed to set AsyncNotifier FD to non-blocking");
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to set AsyncNotifier FD to non-blocking");
         return false;
     }
 
@@ -130,7 +130,7 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
     );
 
     if (poll_event == NULL) {
-        php_error(E_ERROR, "Failed to create TrueAsync poll event");
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to create TrueAsync poll event");
         return false;
     }
 
@@ -173,7 +173,7 @@ void frankenphp_request_coroutine_entry(void)
     /* Get the user callback */
     callback = frankenphp_get_request_callback();
     if (callback == NULL) {
-        php_error(E_WARNING, "No request callback registered");
+        php_error(E_WARNING, "FrankenPHP TrueAsync: No request callback registered");
         return;
     }
 
@@ -188,7 +188,7 @@ void frankenphp_request_coroutine_entry(void)
     /* Call user callback: callback($request, $response) */
     ZVAL_UNDEF(&retval);
     if (call_user_function(NULL, NULL, callback, &retval, 2, params) == FAILURE) {
-        php_error(E_WARNING, "Failed to call request handler callback");
+        php_error(E_WARNING, "FrankenPHP TrueAsync: Failed to call request handler callback");
     }
 
     /* Cleanup */
