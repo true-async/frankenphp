@@ -112,6 +112,32 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 	return asyncW, nil
 }
 
+// initThreads initializes all threads for this async worker.
+// Called during worker startup to prepare thread pool.
+func (aw *asyncWorker) initThreads(workersReady *sync.WaitGroup) {
+	for i := 0; i < aw.num; i++ {
+		thread := getInactivePHPThread()
+
+		thread.requestChan = make(chan contextHolder, aw.bufferSize)
+		thread.asyncNotifier = NewAsyncNotifier()
+		thread.asyncMode = true
+		thread.handler = &asyncWorkerThread{
+			state:           thread.state,
+			thread:          thread,
+			worker:          aw,
+			isBootingScript: true,
+		}
+
+		aw.attachThread(thread)
+
+		workersReady.Go(func() {
+			thread.state.Set(state.BootRequested)
+			thread.boot()
+			thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
+		})
+	}
+}
+
 // handleRequestAsync dispatches requests using round-robin across worker threads.
 // Returns ErrAllBuffersFull if all thread buffers are full.
 func (aw *asyncWorker) handleRequestAsync(ch contextHolder) error {

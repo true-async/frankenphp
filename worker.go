@@ -67,27 +67,7 @@ func initWorkers(opt []workerOpt) error {
 
 	for _, w := range workers {
 		if asyncWorker, ok := w.(*asyncWorker); ok {
-			for i := 0; i < asyncWorker.num; i++ {
-				thread := getInactivePHPThread()
-
-				thread.requestChan = make(chan contextHolder, asyncWorker.bufferSize)
-				thread.asyncNotifier = NewAsyncNotifier()
-				thread.asyncMode = true
-				thread.handler = &asyncWorkerThread{
-					state:           thread.state,
-					thread:          thread,
-					worker:          asyncWorker,
-					isBootingScript: true,
-				}
-
-				asyncWorker.attachThread(thread)
-
-				workersReady.Go(func() {
-					thread.state.Set(state.BootRequested)
-					thread.boot()
-					thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
-				})
-			}
+			asyncWorker.initThreads(&workersReady)
 		} else {
 			for i := 0; i < w.num; i++ {
 				thread := getInactivePHPThread()
