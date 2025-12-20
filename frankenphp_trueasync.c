@@ -2,10 +2,8 @@
  * FrankenPHP TrueAsync Integration
  *
  * Integrates FrankenPHP with TrueAsync event loop:
- * - Load entrypoint script once and keep it resident
- * - Register AsyncNotifier FD with TrueAsync poll events
- * - Create coroutines for each incoming request
- * - Suspend main coroutine to let event loop run
+ *
+ * Author: Edmond Dantes
  */
 
 #ifdef HAVE_CONFIG_H
@@ -16,6 +14,7 @@
 #include "php_ini.h"
 #include "php_main.h"
 #include "SAPI.h"
+#include "Zend/zend_async_API.h"
 #include "frankenphp.h"
 
 #include <fcntl.h>
@@ -25,19 +24,10 @@
 extern __thread bool is_async_mode_requested;
 extern __thread zval *async_request_callback;
 
-/* TrueAsync headers - will be available when compiled with -tags trueasync */
-#include "Zend/zend_async_API.h"
-
-/* Forward declarations for CGO functions from Go */
 extern void go_async_clear_notification(uintptr_t thread_index);
 extern uint64_t go_async_check_new_requests(uintptr_t thread_index);
 
-/* Thread-local storage for current thread index (needed by heartbeat handler) */
 __thread uintptr_t frankenphp_current_thread_index = 0;
-
-/* ============================================================================
- * 1. Auto-detection and Activation of Async Mode
- * ============================================================================ */
 
 /*
  * Checks if async mode was requested via HttpServer::onRequest()
@@ -45,114 +35,41 @@ __thread uintptr_t frankenphp_current_thread_index = 0;
  */
 bool frankenphp_check_async_mode_requested(uintptr_t thread_index)
 {
-    /* Simply return the TLS flag value set by HttpServer::onRequest() */
     return is_async_mode_requested;
 }
 
 /*
- * Activates async mode for this worker thread
- * Called from Go when worker script uses HttpServer::onRequest()
- * Transitions from blocking worker mode to async event loop mode
+ * Enters async mode after script execution
+ * Called from frankenphp_execute_script when async mode was requested
  */
-void frankenphp_activate_async_mode(uintptr_t thread_index)
+void frankenphp_enter_async_mode(void)
 {
-    /* Store thread_index in TLS for heartbeat handler */
-    frankenphp_current_thread_index = thread_index;
-
-    /* Verify that callback was registered */
     if (async_request_callback == NULL) {
-        php_error(E_ERROR, "Cannot activate async mode: no callback registered. Please use FrankenPHP\\HttpServer::onRequest()");
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Cannot enter async mode: no callback registered. "
+                           "Please use FrankenPHP\\HttpServer::onRequest()");
         return;
     }
 
-    /* Activate TrueAsync scheduler */
     if (!frankenphp_activate_true_async()) {
-        php_error(E_ERROR, "Failed to activate TrueAsync scheduler");
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to activate TrueAsync scheduler");
         return;
     }
 
-    /* TODO: Register AsyncNotifier FD with event loop
-     * We need to get the eventfd from Go via CGO call
-     * int notifier_fd = go_async_get_notifier_fd(thread_index);
-     * frankenphp_register_async_notifier_event(notifier_fd, thread_index);
-     */
-
-    /* Suspend main coroutine - event loop takes over */
     frankenphp_suspend_main_coroutine();
-
-    /* We never return from here - event loop runs until shutdown */
 }
-
-/* ============================================================================
- * 2. Load Entrypoint Script
- * ============================================================================ */
-
-/*
- * Loads the entrypoint.php script
- * This script calls HttpServer::onRequest($callback) to register the handler
- */
-int frankenphp_async_load_entrypoint(char *entrypoint_path)
-{
-    zend_file_handle file_handle;
-    int ret;
-
-    if (!entrypoint_path || strlen(entrypoint_path) == 0) {
-        php_error(E_ERROR, "TrueAsync entrypoint path is empty");
-        return FAILURE;
-    }
-
-    /* Initialize file handle */
-    zend_stream_init_filename(&file_handle, entrypoint_path);
-
-    /* Start request to initialize superglobals */
-    if (php_request_startup() == FAILURE) {
-        zend_destroy_file_handle(&file_handle);
-        return FAILURE;
-    }
-
-    /* Execute entrypoint script */
-    ret = php_execute_script(&file_handle);
-
-    /* Note: We do NOT call php_request_shutdown() here!
-     * The entrypoint stays loaded and the event loop takes over
-     */
-
-    if (ret == SUCCESS) {
-        /* Verify that callback was registered */
-        zval *callback = frankenphp_get_request_callback();
-        if (callback == NULL) {
-            php_error(E_WARNING, "TrueAsync entrypoint did not register HttpServer::onRequest() callback");
-            return FAILURE;
-        }
-    }
-
-    return ret;
-}
-
-/* ============================================================================
- * 2. Activate TrueAsync Scheduler
- * ============================================================================ */
 
 /*
  * Activates the TrueAsync scheduler
  */
 bool frankenphp_activate_true_async(void)
 {
-    /* Check if TrueAsync extension is loaded */
-    if (!ZEND_ASYNC_IS_READY) {
-        php_error(E_ERROR, "TrueAsync extension is not loaded");
+    if (UNEXPECTED(ZEND_ASYNC_SCHEDULER_LAUNCH()) {
+        php_error(E_ERROR, "FrankenPHP TrueAsync: The Scheduler was not properly activated");
         return false;
     }
 
-    /* Launch the scheduler */
-    ZEND_ASYNC_SCHEDULER_LAUNCH();
-
     return ZEND_ASYNC_IS_ACTIVE;
 }
-
-/* ============================================================================
- * 3. Register AsyncNotifier with TrueAsync Event Loop
- * ============================================================================ */
 
 /*
  * Callback invoked when AsyncNotifier FD becomes readable (SLOW PATH)
@@ -239,10 +156,6 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
     return true;
 }
 
-/* ============================================================================
- * 4. Request Handling with Coroutines
- * ============================================================================ */
-
 /*
  * Coroutine entry point - invokes user callback
  */
@@ -303,26 +216,61 @@ void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index
     ZEND_ASYNC_ENQUEUE_COROUTINE(coroutine);
 }
 
-/* ============================================================================
- * 5. Suspend Main Coroutine
- * ============================================================================ */
+/* Server wait event methods */
+static bool frankenphp_server_wait_event_start(zend_async_event_t *event)
+{
+    /* No action needed - event waits indefinitely */
+    return true;
+}
 
-/*
- * Event methods for the "wait event" that never fires
- * This keeps the main coroutine suspended indefinitely
- */
-static bool frankenphp_server_wait_event_start(zend_async_event_t *event) {
-    /* Do nothing - event never becomes ready */
+static bool frankenphp_server_wait_event_stop(zend_async_event_t *event)
+{
+    /* No action needed */
+    return true;
+}
+
+static bool
+frankenphp_server_wait_event_add_callback(zend_async_event_t *event, zend_async_event_callback_t *callback)
+{
+    return zend_async_callbacks_push(event, callback);
+}
+
+static bool
+frankenphp_server_wait_event_del_callback(zend_async_event_t *event, zend_async_event_callback_t *callback)
+{
+    return zend_async_callbacks_remove(event, callback);
+}
+
+static bool
+frankenphp_server_wait_event_replay(zend_async_event_t *event, zend_async_event_callback_t *callback, zval *result, zend_object **exception)
+{
+    /* Event never resolves - cannot replay */
     return false;
 }
 
-static bool frankenphp_server_wait_event_stop(zend_async_event_t *event) {
-    /* Do nothing */
-    return false;
+static zend_string *frankenphp_server_wait_event_info(zend_async_event_t *event)
+{
+    return zend_string_init("Frankenphp server waiting", sizeof("Frankenphp server waiting") - 1, 0);
 }
 
-static bool frankenphp_server_wait_event_dispose(zend_async_event_t *event) {
+static bool
+frankenphp_server_wait_event_dispose(zend_async_event_t *event)
+{
+    if (ZEND_ASYNC_EVENT_REFCOUNT(event) > 1) {
+        ZEND_ASYNC_EVENT_DEL_REF(event);
+        return true;
+    }
+
+    if (ZEND_ASYNC_EVENT_REFCOUNT(event) == 1) {
+        ZEND_ASYNC_EVENT_DEL_REF(event);
+    }
+
+    /* Notify all callbacks that event is disposed */
+    ZEND_ASYNC_CALLBACKS_NOTIFY(event, NULL, NULL);
+
+    /* Free the event */
     efree(event);
+
     return true;
 }
 
@@ -332,27 +280,36 @@ static bool frankenphp_server_wait_event_dispose(zend_async_event_t *event) {
  */
 bool frankenphp_suspend_main_coroutine(void)
 {
-    zend_coroutine_t *coroutine;
-    zend_async_event_t *event;
+    zend_coroutine_t *coroutine = ZEND_ASYNC_CURRENT_COROUTINE;
+    zend_async_event_t *event = ecalloc(1, sizeof(zend_async_event_t));
 
-    coroutine = ZEND_ASYNC_CURRENT_COROUTINE;
-
-    /* Create a wait event that never becomes ready */
-    event = emalloc(sizeof(zend_async_event_t));
-    memset(event, 0, sizeof(zend_async_event_t));
-
-    /* Set event methods (all are stubs that do nothing) */
     event->start = frankenphp_server_wait_event_start;
     event->stop = frankenphp_server_wait_event_stop;
+    event->add_callback = frankenphp_server_wait_event_add_callback;
+    event->del_callback = frankenphp_server_wait_event_del_callback;
+    event->replay = frankenphp_server_wait_event_replay;
+    event->info = frankenphp_server_wait_event_info;
     event->dispose = frankenphp_server_wait_event_dispose;
 
-    /* Create waker and suspend coroutine indefinitely */
-    zend_async_waker_new(coroutine);
+    /* Create waker for coroutine */
+    if (UNEXPECTED(zend_async_waker_new(coroutine) == NULL)) {
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to create waker");
+        event->dispose(event);
+        return;
+    }
+
+    /* Attach coroutine to wait event - it will suspend until GRACEFUL_SHUTDOWN */
     zend_async_resume_when(coroutine, event, true, zend_async_waker_callback_resolve, NULL);
 
-    /* This suspends the coroutine - control passes to event loop */
-    ZEND_ASYNC_SUSPEND();
+    if (UNEXPECTED(EG(exception) != NULL)) {
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to attach coroutine to wait event");
+        zend_async_waker_clean(coroutine);
+        event->dispose(event);
+        return false;
+    }
 
-    /* We never return from here - event loop runs until shutdown */
+    ZEND_ASYNC_SUSPEND();
+    zend_async_waker_clean(coroutine);
+
     return true;
 }

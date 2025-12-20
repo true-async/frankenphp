@@ -16,6 +16,7 @@
 #include "ext/standard/info.h"
 #include "SAPI.h"
 #include "frankenphp.h"
+#include <pthread.h>
 
 /* Forward declarations for CGO functions from Go */
 extern char *go_async_get_request_method(uint64_t request_id);
@@ -27,9 +28,6 @@ extern void go_async_notify_request_done(uint64_t request_id);
 /* TLS variables from frankenphp.c */
 extern __thread bool is_async_mode_requested;
 extern __thread zval *async_request_callback;
-
-/* Global callback storage for HttpServer::onRequest() */
-static zval *frankenphp_request_callback = NULL;
 
 /* Class entry pointers */
 static zend_class_entry *frankenphp_httpserver_ce;
@@ -124,20 +122,13 @@ PHP_METHOD(FrankenPHP_HttpServer, onRequest)
     }
 
     /* Free previous callback if exists */
-    if (frankenphp_request_callback != NULL) {
-        zval_ptr_dtor(frankenphp_request_callback);
-        efree(frankenphp_request_callback);
-    }
-
-    /* Store new callback */
-    frankenphp_request_callback = emalloc(sizeof(zval));
-    ZVAL_COPY(frankenphp_request_callback, callback);
-
-    /* Also store in TLS for this thread */
     if (async_request_callback != NULL) {
         zval_ptr_dtor(async_request_callback);
         efree(async_request_callback);
+        async_request_callback = NULL;
     }
+
+    /* Store new callback in TLS */
     async_request_callback = emalloc(sizeof(zval));
     ZVAL_COPY(async_request_callback, callback);
 
@@ -428,7 +419,7 @@ int frankenphp_extension_init(void)
 /* Get the stored request callback */
 zval *frankenphp_get_request_callback(void)
 {
-    return frankenphp_request_callback;
+    return async_request_callback;
 }
 
 /* Create a Request object with given request_id */

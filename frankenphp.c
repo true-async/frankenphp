@@ -1093,6 +1093,11 @@ int frankenphp_execute_script(char *file_name) {
   zend_catch { status = EG(exit_status); }
   zend_end_try();
 
+  // Check if async mode was requested and no exception occurred
+  if (EG(exception) == NULL && is_async_mode_requested) {
+    frankenphp_enter_async_mode();
+  }
+
   // free the cached os environment before shutting down the script
   if (os_environment != NULL) {
     zval_ptr_dtor(os_environment);
