@@ -161,6 +161,13 @@ func (f *FrankenPHPApp) Start() error {
 			frankenphp.WithWorkerRequestOptions(w.requestOptions...),
 		)
 
+		if w.Async {
+			w.options = append(w.options, frankenphp.WithWorkerAsync(true))
+			if w.BufferSize > 0 {
+				w.options = append(w.options, frankenphp.WithWorkerBufferSize(w.BufferSize))
+			}
+		}
+
 		f.opts = append(f.opts, frankenphp.WithWorkers(w.Name, repl.ReplaceKnown(w.FileName, ""), w.Num, w.options...))
 	}
 

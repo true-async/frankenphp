@@ -168,11 +168,3 @@ func (n *AsyncNotifier) Close() error {
 
 	return err
 }
-
-//export go_async_clear_notification
-func go_async_clear_notification(threadIndex C.uintptr_t) {
-	thread := phpThreads[threadIndex]
-	if thread.asyncNotifier != nil {
-		thread.asyncNotifier.Clear()
-	}
-}

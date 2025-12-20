@@ -40,6 +40,10 @@ type workerConfig struct {
 	MatchPath []string `json:"match_path,omitempty"`
 	// MaxConsecutiveFailures sets the maximum number of consecutive failures before panicking (defaults to 6, set to -1 to never panick)
 	MaxConsecutiveFailures int `json:"max_consecutive_failures,omitempty"`
+	// Async enables async worker mode for handling multiple concurrent requests per thread
+	Async bool `json:"async,omitempty"`
+	// BufferSize sets the buffer size for async workers (1-1000, default: 20)
+	BufferSize int `json:"buffer_size,omitempty"`
 
 	options        []frankenphp.WorkerOption
 	requestOptions []frankenphp.RequestOption
@@ -142,8 +146,24 @@ func unmarshalWorker(d *caddyfile.Dispenser) (workerConfig, error) {
 			}
 
 			wc.MaxConsecutiveFailures = v
+		case "async":
+			wc.Async = true
+		case "buffer_size":
+			if !d.NextArg() {
+				return wc, d.ArgErr()
+			}
+
+			v, err := strconv.ParseUint(d.Val(), 10, 32)
+			if err != nil {
+				return wc, d.WrapErr(err)
+			}
+			if v < 1 || v > 1000 {
+				return wc, d.Errf("buffer_size must be between 1 and 1000")
+			}
+
+			wc.BufferSize = int(v)
 		default:
-			return wc, wrongSubDirectiveError("worker", "name, file, num, env, watch, match, max_consecutive_failures, max_threads", v)
+			return wc, wrongSubDirectiveError("worker", "name, file, num, env, watch, match, max_consecutive_failures, max_threads, async, buffer_size", v)
 		}
 	}
 

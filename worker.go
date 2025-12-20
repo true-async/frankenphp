@@ -66,13 +66,39 @@ func initWorkers(opt []workerOpt) error {
 	startupFailChan = make(chan error, totalThreadsToStart)
 
 	for _, w := range workers {
-		for i := 0; i < w.num; i++ {
-			thread := getInactivePHPThread()
-			convertToWorkerThread(thread, w)
+		if asyncWorker, ok := w.(*asyncWorker); ok {
+			for i := 0; i < asyncWorker.num; i++ {
+				thread := getInactivePHPThread()
 
-			workersReady.Go(func() {
-				thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
-			})
+				thread.requestChan = make(chan contextHolder, asyncWorker.bufferSize)
+				thread.asyncNotifier = NewAsyncNotifier()
+				thread.asyncMode = true
+				thread.handler = &asyncWorkerThread{
+					state:                  thread.state,
+					thread:                 thread,
+					worker:                 asyncWorker,
+					dummyFrankenPHPContext: &frankenPHPContext{},
+					dummyContext:           globalCtx,
+					isBootingScript:        true,
+				}
+
+				asyncWorker.attachThread(thread)
+
+				workersReady.Go(func() {
+					thread.state.Set(state.BootRequested)
+					thread.boot()
+					thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
+				})
+			}
+		} else {
+			for i := 0; i < w.num; i++ {
+				thread := getInactivePHPThread()
+				convertToWorkerThread(thread, w)
+
+				workersReady.Go(func() {
+					thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
+				})
+			}
 		}
 	}
 
@@ -111,6 +137,10 @@ func getWorkerByPath(path string) *worker {
 }
 
 func newWorker(o workerOpt) (*worker, error) {
+	if o.asyncMode {
+		return newAsyncWorker(o)
+	}
+
 	absFileName, err := fastabs.FastAbs(o.fileName)
 	if err != nil {
 		return nil, fmt.Errorf("worker filename is invalid %q: %w", o.fileName, err)
@@ -124,8 +154,6 @@ func newWorker(o workerOpt) (*worker, error) {
 		o.name = absFileName
 	}
 
-	// workers that have a name starting with "m#" are module workers
-	// they can only be matched by their name, not by their path
 	allowPathMatching := !strings.HasPrefix(o.name, "m#")
 
 	if w := getWorkerByPath(absFileName); w != nil && allowPathMatching {

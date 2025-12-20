@@ -51,6 +51,8 @@ type workerOpt struct {
 	onThreadShutdown       func(int)
 	onServerStartup        func()
 	onServerShutdown       func()
+	asyncMode              bool
+	bufferSize             int
 }
 
 // WithContext sets the main context to use.
@@ -266,6 +268,23 @@ func WithAsyncMode(entrypoint string, threadCount int) Option {
 		}
 		o.asyncThreadCount = threadCount
 
+		return nil
+	}
+}
+
+func WithWorkerAsync(asyncMode bool) WorkerOption {
+	return func(o *workerOpt) error {
+		o.asyncMode = asyncMode
+		return nil
+	}
+}
+
+func WithWorkerBufferSize(size int) WorkerOption {
+	return func(o *workerOpt) error {
+		if size < 1 || size > 1000 {
+			return fmt.Errorf("buffer_size must be between 1 and 1000, got %d", size)
+		}
+		o.bufferSize = size
 		return nil
 	}
 }

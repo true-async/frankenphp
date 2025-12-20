@@ -433,12 +433,13 @@ func ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) error 
 		return err
 	}
 
-	// Detect if a worker is available to handle this request
 	if fc.worker != nil {
+		if asyncWorker, ok := fc.worker.(*asyncWorker); ok {
+			return asyncWorker.handleRequestAsync(ch)
+		}
 		return fc.worker.handleRequest(ch)
 	}
 
-	// If no worker was available, send the request to non-worker threads
 	return handleRequestWithRegularPHPThreads(ch)
 }
 
