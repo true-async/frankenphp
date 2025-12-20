@@ -27,7 +27,8 @@ extern __thread zval *async_request_callback;
 extern void go_async_clear_notification(uintptr_t thread_index);
 extern uint64_t go_async_check_new_requests(uintptr_t thread_index);
 
-__thread uintptr_t frankenphp_current_thread_index = 0;
+__thread zend_async_heartbeat_handler_t old_heartbeat_handler = NULL;
+__thread zend_async_poll_event_t *request_event = NULL;
 
 /*
  * Checks if async mode was requested via HttpServer::onRequest()
@@ -36,6 +37,21 @@ __thread uintptr_t frankenphp_current_thread_index = 0;
 bool frankenphp_check_async_mode_requested(uintptr_t thread_index)
 {
     return is_async_mode_requested;
+}
+
+/**
+ * A handler that is invoked on each Scheduler tick.
+ * It checks whether there are additional requests in the queue to take for processing.
+ */
+void frankenphp_scheudler_tick_handler(void)
+{
+    /* @todo
+     * There should be very fast Go channel checking code here.
+     **/
+
+    if (old_heartbeat_handler) {
+        old_heartbeat_handler();
+    }
 }
 
 /*
@@ -54,6 +70,8 @@ void frankenphp_enter_async_mode(void)
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to activate TrueAsync scheduler");
         return;
     }
+
+    old_heartbeat_handler = zend_async_set_heartbeat_handler(frankenphp_scheudler_tick_handler);
 
     frankenphp_suspend_main_coroutine();
 }
@@ -101,14 +119,8 @@ static void frankenphp_async_check_requests_callback(
  * Registers AsyncNotifier FD with TrueAsync poll events
  * Also registers FAST PATH - direct scheduler callback
  */
-bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_index)
+bool frankenphp_register_request_notifier(int notifier_fd, uintptr_t thread_index)
 {
-    zend_async_poll_event_t *poll_event;
-    uintptr_t *extra_data;
-
-    /* Store thread_index in thread-local storage for heartbeat handler */
-    frankenphp_current_thread_index = thread_index;
-
     if (notifier_fd < 0) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Invalid AsyncNotifier FD: %d", notifier_fd);
         return false;
@@ -122,36 +134,29 @@ bool frankenphp_register_async_notifier_event(int notifier_fd, uintptr_t thread_
     }
 
     /* Create TrueAsync poll event with extra space for thread_index */
-    poll_event = ZEND_ASYNC_NEW_POLL_EVENT_EX(
+    request_event = ZEND_ASYNC_NEW_POLL_EVENT_EX(
         notifier_fd,
-        false,              /* not persistent */
-        ASYNC_READABLE,     /* watch for readable events */
-        sizeof(uintptr_t)   /* extra space for thread_index */
+        NULL,
+        ASYNC_READABLE,
+        sizeof(uintptr_t)
     );
 
-    if (poll_event == NULL) {
+    if (UNEXPECTED(request_event == NULL)) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to create TrueAsync poll event");
         return false;
     }
 
     /* Store thread_index in extra data */
-    extra_data = (uintptr_t *)((char *)poll_event + poll_event->base.extra_offset);
+    uintptr_t *extra_data = (uintptr_t *)((char *)request_event + request_event->base.extra_offset);
     *extra_data = thread_index;
 
     /* Register SLOW PATH callback - called when FD is readable */
-    poll_event->base.add_callback(
-        &poll_event->base,
+    request_event->base.add_callback(
+        &request_event->base,
         ZEND_ASYNC_EVENT_CALLBACK(frankenphp_async_check_requests_callback)
     );
 
-    /* Start polling (integrates with event loop) */
-    poll_event->base.start(&poll_event->base);
-
-    /* TODO: Register FAST PATH - scheduler integration
-     * When coroutines are active, scheduler should call go_async_check_new_requests()
-     * directly without waiting for eventfd to become readable.
-     * This reduces latency by avoiding system calls.
-     */
+    request_event->base.start(&request_event->base);
 
     return true;
 }

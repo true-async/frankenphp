@@ -89,7 +89,7 @@ bool frankenphp_check_async_mode_requested(uintptr_t thread_index);
 void frankenphp_enter_async_mode(void);
 int frankenphp_async_load_entrypoint(char *entrypoint_path);
 bool frankenphp_activate_true_async(void);
-bool frankenphp_register_async_notifier_event(int fd, uintptr_t thread_index);
+bool frankenphp_register_request_notifier(int fd, uintptr_t thread_index);
 bool frankenphp_suspend_main_coroutine(void);
 void frankenphp_handle_request_async(uint64_t request_id, uintptr_t thread_index);
 
