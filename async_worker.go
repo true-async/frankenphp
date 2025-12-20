@@ -19,6 +19,8 @@ var (
 	ErrAllBuffersFull = ErrRejected{"all async worker buffers are full", 503}
 )
 
+// asyncWorker extends worker with async request handling capabilities.
+// Uses buffered channels and round-robin dispatch to distribute requests across threads.
 type asyncWorker struct {
 	*worker
 
@@ -26,6 +28,8 @@ type asyncWorker struct {
 	rrIndex    atomic.Uint32
 }
 
+// asyncWorkerThread handles multiple concurrent requests on a single PHP thread.
+// Requests are tracked per-thread using sync.Map for zero-contention architecture.
 type asyncWorkerThread struct {
 	state  *state.ThreadState
 	thread *phpThread
@@ -34,13 +38,12 @@ type asyncWorkerThread struct {
 	requestMap     sync.Map
 	requestCounter atomic.Uint64
 
-	dummyFrankenPHPContext *frankenPHPContext
-	dummyContext           context.Context
-	isBootingScript        bool
-
-	failureCount int
+	isBootingScript bool
+	failureCount    int
 }
 
+// newAsyncWorker creates a new async worker with buffered request channels.
+// Returns *worker (not *asyncWorker) for compatibility with worker registry.
 func newAsyncWorker(o workerOpt) (*worker, error) {
 	absFileName, err := fastabs.FastAbs(o.fileName)
 	if err != nil {
@@ -109,6 +112,8 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 	return asyncW, nil
 }
 
+// handleRequestAsync dispatches requests using round-robin across worker threads.
+// Returns ErrAllBuffersFull if all thread buffers are full.
 func (aw *asyncWorker) handleRequestAsync(ch contextHolder) error {
 	metrics.StartWorkerRequest(aw.name)
 
@@ -177,16 +182,10 @@ func (h *asyncWorkerThread) afterScriptExecution(exitStatus int) {
 }
 
 func (h *asyncWorkerThread) frankenPHPContext() *frankenPHPContext {
-	if h.isBootingScript {
-		return h.dummyFrankenPHPContext
-	}
 	return nil
 }
 
 func (h *asyncWorkerThread) context() context.Context {
-	if h.isBootingScript {
-		return h.dummyContext
-	}
 	return globalCtx
 }
 
@@ -194,6 +193,9 @@ func (h *asyncWorkerThread) name() string {
 	return "Async Worker Thread: " + h.worker.name
 }
 
+// go_async_worker_get_notification_fd returns the file descriptor for event loop integration.
+// Called from C to get the FD to poll for new request notifications.
+//
 //export go_async_worker_get_notification_fd
 func go_async_worker_get_notification_fd(threadIndex C.uintptr_t) C.int {
 	thread := phpThreads[threadIndex]
@@ -203,6 +205,9 @@ func go_async_worker_get_notification_fd(threadIndex C.uintptr_t) C.int {
 	return C.int(thread.asyncNotifier.GetReadFD())
 }
 
+// go_async_worker_clear_notification clears the notification after event loop wakeup.
+// Called from C after the event loop processes the notification.
+//
 //export go_async_worker_clear_notification
 func go_async_worker_clear_notification(threadIndex C.uintptr_t) {
 	thread := phpThreads[threadIndex]
@@ -211,6 +216,9 @@ func go_async_worker_clear_notification(threadIndex C.uintptr_t) {
 	}
 }
 
+// go_async_worker_check_requests checks for new requests in the thread's channel.
+// Returns request ID if a request is available, 0 otherwise (non-blocking).
+//
 //export go_async_worker_check_requests
 func go_async_worker_check_requests(threadIndex C.uintptr_t) C.uint64_t {
 	thread := phpThreads[threadIndex]
@@ -229,6 +237,9 @@ func go_async_worker_check_requests(threadIndex C.uintptr_t) C.uint64_t {
 	}
 }
 
+// go_async_worker_get_script returns the script filename for a given request ID.
+// Returns NULL if request ID is invalid.
+//
 //export go_async_worker_get_script
 func go_async_worker_get_script(threadIndex C.uintptr_t, requestID C.uint64_t) *C.char {
 	thread := phpThreads[threadIndex]
@@ -250,6 +261,9 @@ func go_async_worker_get_script(threadIndex C.uintptr_t, requestID C.uint64_t) *
 	return thread.pinCString(ch.frankenPHPContext.scriptFilename)
 }
 
+// go_async_worker_get_context validates and prepares context for a request.
+// Returns true if context is valid, false otherwise.
+//
 //export go_async_worker_get_context
 func go_async_worker_get_context(threadIndex C.uintptr_t, requestID C.uint64_t) C.bool {
 	thread := phpThreads[threadIndex]
@@ -270,6 +284,9 @@ func go_async_worker_get_context(threadIndex C.uintptr_t, requestID C.uint64_t) 
 	return C.bool(true)
 }
 
+// go_async_worker_request_done marks a request as complete and cleans up resources.
+// Called from C when request processing is finished.
+//
 //export go_async_worker_request_done
 func go_async_worker_request_done(threadIndex C.uintptr_t, requestID C.uint64_t) {
 	thread := phpThreads[threadIndex]

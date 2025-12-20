@@ -74,12 +74,10 @@ func initWorkers(opt []workerOpt) error {
 				thread.asyncNotifier = NewAsyncNotifier()
 				thread.asyncMode = true
 				thread.handler = &asyncWorkerThread{
-					state:                  thread.state,
-					thread:                 thread,
-					worker:                 asyncWorker,
-					dummyFrankenPHPContext: &frankenPHPContext{},
-					dummyContext:           globalCtx,
-					isBootingScript:        true,
+					state:           thread.state,
+					thread:          thread,
+					worker:          asyncWorker,
+					isBootingScript: true,
 				}
 
 				asyncWorker.attachThread(thread)
