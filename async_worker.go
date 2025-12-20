@@ -19,21 +19,12 @@ var (
 	ErrAllBuffersFull = ErrRejected{"all async worker buffers are full", 503}
 )
 
-// asyncWorker extends worker with async request handling capabilities.
-// Uses buffered channels and round-robin dispatch to distribute requests across threads.
-type asyncWorker struct {
-	*worker
-
-	bufferSize int
-	rrIndex    atomic.Uint32
-}
-
 // asyncWorkerThread handles multiple concurrent requests on a single PHP thread.
 // Requests are tracked per-thread using sync.Map for zero-contention architecture.
 type asyncWorkerThread struct {
 	state  *state.ThreadState
 	thread *phpThread
-	worker *asyncWorker
+	worker *worker
 
 	requestMap     sync.Map
 	requestCounter atomic.Uint64
@@ -78,7 +69,7 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 		bufferSize = 20
 	}
 
-	baseWorker := &worker{
+	w := &worker{
 		name:                   o.name,
 		fileName:               absFileName,
 		requestOptions:         o.requestOptions,
@@ -90,45 +81,46 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 		maxConsecutiveFailures: o.maxConsecutiveFailures,
 		onThreadReady:          o.onThreadReady,
 		onThreadShutdown:       o.onThreadShutdown,
+		isAsync:                true,
+		bufferSize:             bufferSize,
 	}
 
-	baseWorker.configureMercure(&o)
+	w.configureMercure(&o)
 
-	baseWorker.requestOptions = append(
-		baseWorker.requestOptions,
+	w.requestOptions = append(
+		w.requestOptions,
 		WithRequestDocumentRoot(filepath.Dir(o.fileName), false),
 		WithRequestPreparedEnv(o.env),
 	)
 
 	if o.extensionWorkers != nil {
-		o.extensionWorkers.internalWorker = baseWorker
+		o.extensionWorkers.internalWorker = w
 	}
 
-	asyncW := &asyncWorker{
-		worker:     baseWorker,
-		bufferSize: bufferSize,
-	}
-
-	return asyncW, nil
+	return w, nil
 }
 
 // initThreads initializes all threads for this async worker.
 // Called during worker startup to prepare thread pool.
-func (aw *asyncWorker) initThreads(workersReady *sync.WaitGroup) {
-	for i := 0; i < aw.num; i++ {
+func (w *worker) initAsyncThreads(workersReady *sync.WaitGroup) {
+	for i := 0; i < w.num; i++ {
 		thread := getInactivePHPThread()
 
-		thread.requestChan = make(chan contextHolder, aw.bufferSize)
-		thread.asyncNotifier = NewAsyncNotifier()
+		thread.requestChan = make(chan contextHolder, w.bufferSize)
+		notifier, err := NewAsyncNotifier()
+		if err != nil {
+			panic(fmt.Sprintf("failed to create AsyncNotifier: %v", err))
+		}
+		thread.asyncNotifier = notifier
 		thread.asyncMode = true
 		thread.handler = &asyncWorkerThread{
 			state:           thread.state,
 			thread:          thread,
-			worker:          aw,
+			worker:          w,
 			isBootingScript: true,
 		}
 
-		aw.attachThread(thread)
+		w.attachThread(thread)
 
 		workersReady.Go(func() {
 			thread.state.Set(state.BootRequested)
@@ -140,15 +132,15 @@ func (aw *asyncWorker) initThreads(workersReady *sync.WaitGroup) {
 
 // handleRequestAsync dispatches requests using round-robin across worker threads.
 // Returns ErrAllBuffersFull if all thread buffers are full.
-func (aw *asyncWorker) handleRequestAsync(ch contextHolder) error {
-	metrics.StartWorkerRequest(aw.name)
+func (w *worker) handleRequestAsync(ch contextHolder) error {
+	metrics.StartWorkerRequest(w.name)
 
     // A simple Round Robin algorithm for testing
-	start := aw.rrIndex.Add(1) % uint32(len(aw.threads))
+	start := w.rrIndex.Add(1) % uint32(len(w.threads))
 
-	for i := 0; i < len(aw.threads); i++ {
-		idx := (start + uint32(i)) % uint32(len(aw.threads))
-		thread := aw.threads[idx]
+	for i := 0; i < len(w.threads); i++ {
+		idx := (start + uint32(i)) % uint32(len(w.threads))
+		thread := w.threads[idx]
 
 		select {
 		case thread.requestChan <- ch:
@@ -163,7 +155,7 @@ func (aw *asyncWorker) handleRequestAsync(ch contextHolder) error {
 		}
 	}
 
-	metrics.StopWorkerRequest(aw.name, 0)
+	metrics.StopWorkerRequest(w.name, 0)
 	return ErrAllBuffersFull
 }
 

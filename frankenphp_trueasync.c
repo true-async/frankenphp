@@ -87,7 +87,7 @@ void frankenphp_enter_async_mode(void)
  */
 bool frankenphp_activate_true_async(void)
 {
-    if (UNEXPECTED(ZEND_ASYNC_SCHEDULER_LAUNCH()) {
+    if (UNEXPECTED(!ZEND_ASYNC_SCHEDULER_LAUNCH())) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: The Scheduler was not properly activated");
         return false;
     }
@@ -139,8 +139,8 @@ bool frankenphp_register_request_notifier(int notifier_fd, uintptr_t thread_inde
 
     /* Create TrueAsync poll event with extra space for thread_index */
     request_event = ZEND_ASYNC_NEW_POLL_EVENT_EX(
+        -1,
         notifier_fd,
-        NULL,
         ASYNC_READABLE,
         sizeof(uintptr_t)
     );
@@ -308,7 +308,7 @@ bool frankenphp_suspend_main_coroutine(void)
     if (UNEXPECTED(zend_async_waker_new(coroutine) == NULL)) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to create waker");
         event->dispose(event);
-        return;
+        return false;
     }
 
     /* Attach coroutine to wait event - it will suspend until GRACEFUL_SHUTDOWN */

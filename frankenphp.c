@@ -72,6 +72,7 @@ frankenphp_config frankenphp_get_config() {
 bool should_filter_var = 0;
 __thread uintptr_t thread_index;
 __thread bool is_worker_thread = false;
+__thread bool is_async_worker_thread = false;
 __thread zval *os_environment = NULL;
 
 /* TLS for async mode detection */
@@ -80,6 +81,7 @@ __thread zval *async_request_callback = NULL;
 
 void frankenphp_update_local_thread_context(bool is_worker) {
   is_worker_thread = is_worker;
+  is_async_worker_thread = go_frankenphp_is_async_thread(thread_index);
 }
 
 static void frankenphp_update_request_context() {
@@ -1093,8 +1095,16 @@ int frankenphp_execute_script(char *file_name) {
   zend_catch { status = EG(exit_status); }
   zend_end_try();
 
-  // Check if async mode was requested and no exception occurred
-  if (EG(exception) == NULL && is_async_mode_requested) {
+  // For async worker threads: enter async mode after first script execution
+  if (EG(exception) == NULL && is_async_worker_thread) {
+    // Verify that the script called HttpServer::onRequest()
+    if (!is_async_mode_requested) {
+      php_error(E_ERROR,
+        "FrankenPHP async worker: script must call FrankenPHP\\HttpServer::onRequest() "
+        "to register request handler before entering async mode");
+      return FAILURE;
+    }
+
     frankenphp_enter_async_mode();
   }
 

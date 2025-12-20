@@ -33,6 +33,11 @@ type worker struct {
 	onThreadReady          func(int)
 	onThreadShutdown       func(int)
 	queuedRequests         atomic.Int32
+
+	// Async worker fields
+	isAsync    bool
+	bufferSize int
+	rrIndex    atomic.Uint32
 }
 
 var (
@@ -66,8 +71,8 @@ func initWorkers(opt []workerOpt) error {
 	startupFailChan = make(chan error, totalThreadsToStart)
 
 	for _, w := range workers {
-		if asyncWorker, ok := w.(*asyncWorker); ok {
-			asyncWorker.initThreads(&workersReady)
+		if w.isAsync {
+			w.initAsyncThreads(&workersReady)
 		} else {
 			for i := 0; i < w.num; i++ {
 				thread := getInactivePHPThread()

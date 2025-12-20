@@ -47,6 +47,9 @@ bool frankenphp_shutdown_dummy_request(void);
 int frankenphp_execute_script(char *file_name);
 void frankenphp_update_local_thread_context(bool is_worker);
 
+/* Go callbacks */
+bool go_frankenphp_is_async_thread(uintptr_t thread_index);
+
 int frankenphp_execute_script_cli(char *script, int argc, char **argv,
                                   bool eval);
 

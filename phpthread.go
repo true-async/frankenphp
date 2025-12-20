@@ -175,6 +175,12 @@ func go_frankenphp_after_script_execution(threadIndex C.uintptr_t, exitStatus C.
 	thread.Unpin()
 }
 
+//export go_frankenphp_is_async_thread
+func go_frankenphp_is_async_thread(threadIndex C.uintptr_t) C.bool {
+	thread := phpThreads[threadIndex]
+	return C.bool(thread.asyncMode)
+}
+
 //export go_frankenphp_on_thread_shutdown
 func go_frankenphp_on_thread_shutdown(threadIndex C.uintptr_t) {
 	thread := phpThreads[threadIndex]
