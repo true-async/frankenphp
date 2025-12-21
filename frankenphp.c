@@ -1090,23 +1090,14 @@ int frankenphp_execute_script(char *file_name) {
   zend_first_try {
     EG(exit_status) = 0;
     php_execute_script(&file_handle);
+    // For async worker threads: enter async mode after first script execution
+    if (EG(exception) == NULL && is_async_worker_thread) {
+      frankenphp_enter_async_mode();
+    }
     status = EG(exit_status);
   }
   zend_catch { status = EG(exit_status); }
   zend_end_try();
-
-  // For async worker threads: enter async mode after first script execution
-  if (EG(exception) == NULL && is_async_worker_thread) {
-    // Verify that the script called HttpServer::onRequest()
-    if (!is_async_mode_requested) {
-      php_error(E_ERROR,
-        "FrankenPHP async worker: script must call FrankenPHP\\HttpServer::onRequest() "
-        "to register request handler before entering async mode");
-      return FAILURE;
-    }
-
-    frankenphp_enter_async_mode();
-  }
 
   // free the cached os environment before shutting down the script
   if (os_environment != NULL) {

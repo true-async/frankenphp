@@ -88,7 +88,6 @@ void frankenphp_create_request_object(zval *return_value, uint64_t request_id);
 void frankenphp_create_response_object(zval *return_value, uint64_t request_id);
 
 /* TrueAsync Integration */
-bool frankenphp_check_async_mode_requested(uintptr_t thread_index);
 void frankenphp_enter_async_mode(void);
 int frankenphp_async_load_entrypoint(char *entrypoint_path);
 bool frankenphp_activate_true_async(void);

@@ -20,34 +20,27 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-/* External TLS variables from frankenphp.c */
-extern __thread bool is_async_mode_requested;
+extern __thread uintptr_t thread_index;
 extern __thread zval *async_request_callback;
 
-extern void go_async_clear_notification(uintptr_t thread_index);
-extern uint64_t go_async_check_new_requests(uintptr_t thread_index);
+extern int go_async_worker_get_notification_fd(uintptr_t thread_index);
+extern void go_async_worker_clear_notification(uintptr_t thread_index);
+extern uint64_t go_async_worker_check_requests(uintptr_t thread_index);
 
 __thread zend_async_heartbeat_handler_t old_heartbeat_handler = NULL;
 __thread zend_async_poll_event_t *request_event = NULL;
 
 /*
- * Checks if async mode was requested via HttpServer::onRequest()
- * Called from Go after first script execution to determine if worker should activate async mode
- */
-bool frankenphp_check_async_mode_requested(uintptr_t thread_index)
-{
-    return is_async_mode_requested;
-}
-
-/**
- * A handler that is invoked on each Scheduler tick.
- * It checks whether there are additional requests in the queue to take for processing.
+ * Scheduler tick handler - FAST PATH for request checking
+ * Called on each scheduler tick to poll for new requests without eventfd overhead
  */
 void frankenphp_scheudler_tick_handler(void)
 {
-    /* @todo
-     * There should be very fast Go channel checking code here.
-     **/
+    uint64_t request_id;
+
+    while ((request_id = go_async_worker_check_requests(thread_index)) != 0) {
+        frankenphp_handle_request_async(request_id);
+    }
 
     if (old_heartbeat_handler) {
         old_heartbeat_handler();
@@ -60,18 +53,25 @@ void frankenphp_scheudler_tick_handler(void)
  */
 void frankenphp_enter_async_mode(void)
 {
+    int notifier_fd;
+
     if (async_request_callback == NULL) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Cannot enter async mode: no callback registered. "
                            "Please use FrankenPHP\\HttpServer::onRequest()");
         return;
     }
 
-    // 1. We need to get a special socket from the Go thread
-    // that will wake us up when new requests arrive.
+    notifier_fd = go_async_worker_get_notification_fd(thread_index);
+    if (notifier_fd < 0) {
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to get AsyncNotifier FD from Go thread");
+        return;
+    }
 
-    // 2. Call frankenphp_register_request_notifier
+    if (!frankenphp_register_request_notifier(notifier_fd, thread_index)) {
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to register AsyncNotifier FD");
+        return;
+    }
 
-    // 3. Now we are ready to activate the asynchronous mode.
     if (!frankenphp_activate_true_async()) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to activate TrueAsync scheduler");
         return;
@@ -96,8 +96,8 @@ bool frankenphp_activate_true_async(void)
 }
 
 /*
- * Callback invoked when AsyncNotifier FD becomes readable (SLOW PATH)
- * This is called by TrueAsync event loop when eventfd signals new request
+ * AsyncNotifier FD callback - SLOW PATH
+ * Invoked by TrueAsync event loop when eventfd/pipe becomes readable
  */
 static void frankenphp_async_check_requests_callback(
     zend_async_event_t *event,
@@ -105,44 +105,42 @@ static void frankenphp_async_check_requests_callback(
     void *result,
     zend_object *exception)
 {
-    uintptr_t thread_index;
+    uintptr_t thread_idx;
     uint64_t request_id;
 
-    /* Extract thread_index from event extra data */
-    thread_index = *(uintptr_t *)((char *)event + event->extra_offset);
+    thread_idx = *(uintptr_t *)((char *)event + event->extra_offset);
+    go_async_worker_clear_notification(thread_idx);
 
-    go_async_clear_notification(thread_index);
-
-    /* Check for new requests from Go channel (may return multiple) */
-    while ((request_id = go_async_check_new_requests(thread_index)) != 0) {
+    while ((request_id = go_async_worker_check_requests(thread_idx)) != 0) {
         frankenphp_handle_request_async(request_id);
+
+        if (UNEXPECTED(EG(exception))) {
+            break;
+        }
     }
 }
 
 /*
- * Registers AsyncNotifier FD with TrueAsync poll events
- * Also registers FAST PATH - direct scheduler callback
+ * Registers AsyncNotifier FD with TrueAsync event loop
  */
 bool frankenphp_register_request_notifier(int notifier_fd, uintptr_t thread_index)
 {
+    int flags;
+    uintptr_t *extra_data;
+
     if (notifier_fd < 0) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Invalid AsyncNotifier FD: %d", notifier_fd);
         return false;
     }
 
-    /* Set FD to non-blocking mode */
-    int flags = fcntl(notifier_fd, F_GETFL, 0);
+    flags = fcntl(notifier_fd, F_GETFL, 0);
     if (flags == -1 || fcntl(notifier_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to set AsyncNotifier FD to non-blocking");
         return false;
     }
 
-    /* Create TrueAsync poll event with extra space for thread_index */
     request_event = ZEND_ASYNC_NEW_POLL_EVENT_EX(
-        -1,
-        notifier_fd,
-        ASYNC_READABLE,
-        sizeof(uintptr_t)
+        (zend_file_descriptor_t) notifier_fd, 0, ASYNC_READABLE, sizeof(uintptr_t)
     );
 
     if (UNEXPECTED(request_event == NULL)) {
@@ -150,13 +148,11 @@ bool frankenphp_register_request_notifier(int notifier_fd, uintptr_t thread_inde
         return false;
     }
 
-    /* Store thread_index in extra data */
-    uintptr_t *extra_data = (uintptr_t *)((char *)request_event + request_event->base.extra_offset);
+    extra_data = (uintptr_t *)((char *)request_event + request_event->base.extra_offset);
     *extra_data = thread_index;
 
     /* Register SLOW PATH callback - called when FD is readable */
-    request_event->base.add_callback(
-        &request_event->base,
+    request_event->base.add_callback(&request_event->base,
         ZEND_ASYNC_EVENT_CALLBACK(frankenphp_async_check_requests_callback)
     );
 
