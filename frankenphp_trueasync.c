@@ -50,7 +50,7 @@ void frankenphp_scheudler_tick_handler(void)
 
     while ((request_id = go_async_worker_check_requests(thread_index)) != 0) {
         if (request_id == UINT64_MAX) {
-            close_request_event();
+            //close_request_event();
             ZEND_ASYNC_SHUTDOWN();
             return;
         }
@@ -134,7 +134,7 @@ static void frankenphp_async_check_requests_callback(
 
     while ((request_id = go_async_worker_check_requests(thread_idx)) != 0) {
         if (request_id == UINT64_MAX) {
-            close_request_event();
+            event->stop(event);
             ZEND_ASYNC_SHUTDOWN();
             return;
         }
@@ -299,9 +299,6 @@ frankenphp_server_wait_event_dispose(zend_async_event_t *event)
     if (ZEND_ASYNC_EVENT_REFCOUNT(event) == 1) {
         ZEND_ASYNC_EVENT_DEL_REF(event);
     }
-
-    /* Notify all callbacks that event is disposed */
-    ZEND_ASYNC_CALLBACKS_NOTIFY(event, NULL, NULL);
 
     /* Free the event */
     efree(event);
