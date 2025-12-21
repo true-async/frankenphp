@@ -196,6 +196,20 @@ func drainWorkerThreads() []*phpThread {
 		ready.Add(len(worker.threads))
 
 		for _, thread := range worker.threads {
+			if thread.asyncMode {
+				if !thread.state.RequestSafeStateChange(state.ShuttingDown) {
+					ready.Done()
+					continue
+				}
+				// wake async loop and send shutdown sentinel
+				thread.shutdown()
+				go func(thread *phpThread) {
+					thread.state.WaitFor(state.Done)
+					ready.Done()
+				}(thread)
+				continue
+			}
+
 			if !thread.state.RequestSafeStateChange(state.Restarting) {
 				ready.Done()
 

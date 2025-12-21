@@ -30,6 +30,16 @@ extern uint64_t go_async_worker_check_requests(uintptr_t thread_index);
 __thread zend_async_heartbeat_handler_t old_heartbeat_handler = NULL;
 __thread zend_async_poll_event_t *request_event = NULL;
 
+static void close_request_event(void)
+{
+    zend_async_poll_event_t *event = request_event;
+    request_event = NULL;
+
+    if (event != NULL) {
+        event->base.dispose(&event->base);
+    }
+}
+
 /*
  * Scheduler tick handler - FAST PATH for request checking
  * Called on each scheduler tick to poll for new requests without eventfd overhead
@@ -39,11 +49,12 @@ void frankenphp_scheudler_tick_handler(void)
     uint64_t request_id;
 
     while ((request_id = go_async_worker_check_requests(thread_index)) != 0) {
-    if (request_id == UINT64_MAX) {
-        ZEND_ASYNC_SHUTDOWN();
-        return;
-    }
-    frankenphp_handle_request_async(request_id);
+        if (request_id == UINT64_MAX) {
+            close_request_event();
+            ZEND_ASYNC_SHUTDOWN();
+            return;
+        }
+        frankenphp_handle_request_async(request_id);
     }
 
     if (old_heartbeat_handler) {
@@ -84,6 +95,12 @@ void frankenphp_enter_async_mode(void)
     old_heartbeat_handler = zend_async_set_heartbeat_handler(frankenphp_scheudler_tick_handler);
 
     frankenphp_suspend_main_coroutine();
+    close_request_event();
+    if (async_request_callback != NULL) {
+        zval_ptr_dtor(async_request_callback);
+        efree(async_request_callback);
+        async_request_callback = NULL;
+    }
 }
 
 /*
@@ -117,6 +134,7 @@ static void frankenphp_async_check_requests_callback(
 
     while ((request_id = go_async_worker_check_requests(thread_idx)) != 0) {
         if (request_id == UINT64_MAX) {
+            close_request_event();
             ZEND_ASYNC_SHUTDOWN();
             return;
         }
@@ -300,6 +318,7 @@ bool frankenphp_suspend_main_coroutine(void)
     zend_coroutine_t *coroutine = ZEND_ASYNC_CURRENT_COROUTINE;
     zend_async_event_t *event = ecalloc(1, sizeof(zend_async_event_t));
 
+    event->ref_count = 1;
     event->start = frankenphp_server_wait_event_start;
     event->stop = frankenphp_server_wait_event_stop;
     event->add_callback = frankenphp_server_wait_event_add_callback;

@@ -635,6 +635,9 @@ func go_sapi_flush(threadIndex C.uintptr_t) bool {
 //export go_read_post
 func go_read_post(threadIndex C.uintptr_t, cBuf *C.char, countBytes C.size_t) (readBytes C.size_t) {
 	fc := phpThreads[threadIndex].frankenPHPContext()
+	if fc == nil || fc.request == nil || fc.request.Body == nil {
+		return 0
+	}
 
 	if fc.responseWriter == nil {
 		return 0
