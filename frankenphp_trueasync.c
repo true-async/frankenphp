@@ -39,7 +39,11 @@ void frankenphp_scheudler_tick_handler(void)
     uint64_t request_id;
 
     while ((request_id = go_async_worker_check_requests(thread_index)) != 0) {
-        frankenphp_handle_request_async(request_id);
+    if (request_id == UINT64_MAX) {
+        ZEND_ASYNC_SHUTDOWN();
+        return;
+    }
+    frankenphp_handle_request_async(request_id);
     }
 
     if (old_heartbeat_handler) {
@@ -112,6 +116,10 @@ static void frankenphp_async_check_requests_callback(
     go_async_worker_clear_notification(thread_idx);
 
     while ((request_id = go_async_worker_check_requests(thread_idx)) != 0) {
+        if (request_id == UINT64_MAX) {
+            ZEND_ASYNC_SHUTDOWN();
+            return;
+        }
         frankenphp_handle_request_async(request_id);
 
         if (UNEXPECTED(EG(exception))) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,12 +171,18 @@ func (h *asyncWorkerThread) beforeScriptExecution() string {
 
 	case state.Ready:
 		if h.isBootingScript {
+			if globalLogger.Enabled(globalCtx, slog.LevelInfo) {
+				globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "async worker thread started", slog.String("worker", h.worker.name), slog.Int("thread", h.thread.threadIndex))
+			}
 			h.isBootingScript = false
 			return h.worker.fileName
 		}
 		return h.worker.fileName
 
 	case state.ShuttingDown:
+		if globalLogger.Enabled(globalCtx, slog.LevelInfo) {
+			globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "async worker thread stopping", slog.String("worker", h.worker.name), slog.Int("thread", h.thread.threadIndex))
+		}
 		h.worker.detachThread(h.thread)
 		return ""
 	}
@@ -240,6 +247,8 @@ func go_async_worker_clear_notification(threadIndex C.uintptr_t) {
 //
 //export go_async_worker_check_requests
 func go_async_worker_check_requests(threadIndex C.uintptr_t) C.uint64_t {
+	const shutdownRequestID = ^uint64(0)
+
 	thread := phpThreads[threadIndex]
 	handler, ok := thread.handler.(*asyncWorkerThread)
 	if !ok {
@@ -248,6 +257,11 @@ func go_async_worker_check_requests(threadIndex C.uintptr_t) C.uint64_t {
 
 	select {
 	case ch := <-thread.requestChan:
+		// sentinel for shutdown: empty context signals async loop to stop
+		if ch.frankenPHPContext == nil {
+			return C.uint64_t(shutdownRequestID)
+		}
+
 		requestID := handler.requestCounter.Add(1)
 		handler.requestMap.Store(requestID, ch)
 		return C.uint64_t(requestID)

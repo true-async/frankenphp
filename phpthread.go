@@ -75,6 +75,21 @@ func (thread *phpThread) boot() {
 
 // shutdown the underlying PHP thread
 func (thread *phpThread) shutdown() {
+	// For async threads, request scheduler shutdown and wake the event loop.
+	if thread.asyncMode {
+		if thread.asyncNotifier != nil {
+			_ = thread.asyncNotifier.Notify()
+		}
+		// enqueue a sentinel to wake the request loop (guaranteed send)
+		select {
+		case thread.requestChan <- contextHolder{}:
+		default:
+			go func(ch chan contextHolder) {
+				ch <- contextHolder{}
+			}(thread.requestChan)
+		}
+	}
+
 	if !thread.state.RequestSafeStateChange(state.ShuttingDown) {
 		// already shutting down or done
 		return
