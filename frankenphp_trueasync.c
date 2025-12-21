@@ -300,6 +300,7 @@ frankenphp_server_wait_event_dispose(zend_async_event_t *event)
         ZEND_ASYNC_EVENT_DEL_REF(event);
     }
 
+    zend_async_callbacks_free(event);
     /* Free the event */
     efree(event);
 

@@ -11,7 +11,8 @@ echo "Starting FrankenPHP TrueAsync HttpServer...\n";
 // Register request handler
 HttpServer::onRequest(function (Request $request, Response $response) {
     $method = $request->getMethod();
-    $uri = $request->getUri();
+    // Восстанавливаем исходный путь, проброшенный через rewrite
+    $uri = $_GET['uri'] ?? $request->getUri();
     $headers = $request->getHeaders();
     $body = $request->getBody();
 
@@ -55,7 +56,7 @@ HttpServer::onRequest(function (Request $request, Response $response) {
     } else {
         $response->setStatus(404);
         $response->setHeader('Content-Type', 'application/json');
-        $response->write(json_encode(['error' => 'Not Found']));
+        $response->write(json_encode(['error' => 'Not Found', 'uri' => $uri]));
         $response->end();
     }
 });
