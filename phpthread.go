@@ -12,19 +12,27 @@ import (
 	"github.com/dunglas/frankenphp/internal/state"
 )
 
+// responseWrite represents queued response data for async writing
+type responseWrite struct {
+	requestID uint64
+	data      unsafe.Pointer
+	length    int
+}
+
 // representation of the actual underlying PHP thread
 // identified by the index in the phpThreads slice
 type phpThread struct {
 	runtime.Pinner
 	threadIndex   int
 	requestChan   chan contextHolder
+	responseChan  chan responseWrite
 	drainChan     chan struct{}
 	handlerMu     sync.Mutex
 	handler       threadHandler
 	state         *state.ThreadState
 	sandboxedEnv  map[string]*C.zend_string
-	asyncNotifier *AsyncNotifier // for TrueAsync mode: eventfd/pipe to wake up event loop
-	asyncMode     bool           // true if this thread runs in TrueAsync mode
+	asyncNotifier *AsyncNotifier
+	asyncMode     bool
 }
 
 // interface that defines how the callbacks from the C thread should be handled

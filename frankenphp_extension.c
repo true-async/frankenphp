@@ -19,15 +19,62 @@
 #include <pthread.h>
 
 /* Forward declarations for CGO functions from Go */
-extern char *go_async_get_request_method(uint64_t request_id);
-extern char *go_async_get_request_uri(uint64_t request_id);
-extern char *go_async_get_request_header(uint64_t request_id, const char *header_name);
-extern char *go_async_get_request_body(uint64_t request_id, size_t *length);
-extern void go_async_notify_request_done(uint64_t request_id);
+extern char *go_async_get_request_method(uintptr_t thread_index, uint64_t request_id);
+extern char *go_async_get_request_uri(uintptr_t thread_index, uint64_t request_id);
+extern char *go_async_get_request_header(uintptr_t thread_index, uint64_t request_id, const char *header_name);
+extern char *go_async_get_request_body(uintptr_t thread_index, uint64_t request_id, size_t *length);
+extern void go_async_notify_request_done(uintptr_t thread_index, uint64_t request_id);
+extern void go_async_response_write(uintptr_t thread_index, uint64_t request_id, void *data, size_t length);
 
 /* TLS variables from frankenphp.c */
+extern __thread uintptr_t thread_index;
 extern __thread bool is_async_mode_requested;
 extern __thread zval *async_request_callback;
+
+/* ============================================================================
+ * Pending Writes Management
+ * ============================================================================ */
+
+static __thread HashTable pending_writes_by_request;
+static __thread bool pending_writes_initialized = false;
+
+/*
+ * Initializes the pending writes hash table for the current thread.
+ */
+static void init_pending_writes(void) {
+    if (!pending_writes_initialized) {
+        zend_hash_init(&pending_writes_by_request, 8, NULL, NULL, 0);
+        pending_writes_initialized = true;
+    }
+}
+
+/*
+ * Stores the response buffer zend_string for a request.
+ * Increments refcount to prevent deallocation during async write.
+ */
+static void add_pending_write(uint64_t request_id, zend_string *data) {
+    init_pending_writes();
+    zend_string_addref(data);
+    zend_hash_index_update_ptr(&pending_writes_by_request, request_id, data);
+}
+
+/*
+ * Called by Go when async write completes.
+ * Releases the zend_string reference.
+ */
+void frankenphp_async_write_done(uintptr_t thread_index, uint64_t request_id) {
+    zend_string *data;
+
+    if (!pending_writes_initialized) {
+        return;
+    }
+
+    data = zend_hash_index_find_ptr(&pending_writes_by_request, request_id);
+    if (data) {
+        zend_string_release(data);
+        zend_hash_index_del(&pending_writes_by_request, request_id);
+    }
+}
 
 /* Class entry pointers */
 static zend_class_entry *frankenphp_httpserver_ce;
@@ -74,8 +121,9 @@ static void frankenphp_request_free_object(zend_object *object) {
  * ============================================================================ */
 
 typedef struct {
-    uint64_t request_id;  /* Links to Go's asyncRequestMap */
+    uint64_t request_id;
     uint8_t headers_sent;
+    zend_string *buffer;
     zend_object std;
 } frankenphp_response_object;
 
@@ -92,12 +140,17 @@ static zend_object *frankenphp_response_create_object(zend_class_entry *ce) {
     intern->std.handlers = &frankenphp_response_object_handlers;
     intern->request_id = 0;
     intern->headers_sent = 0;
+    intern->buffer = NULL;
 
     return &intern->std;
 }
 
 static void frankenphp_response_free_object(zend_object *object) {
     frankenphp_response_object *intern = frankenphp_response_from_obj(object);
+
+    if (intern->buffer) {
+        zend_string_release(intern->buffer);
+    }
 
     zend_object_std_dtor(&intern->std);
 }
@@ -153,7 +206,7 @@ PHP_METHOD(FrankenPHP_Request, getMethod)
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
 
     /* Get method from Go via CGO */
-    method = go_async_get_request_method(intern->request_id);
+    method = go_async_get_request_method(thread_index, intern->request_id);
     if (method == NULL) {
         RETURN_STRING("GET");
     }
@@ -173,7 +226,7 @@ PHP_METHOD(FrankenPHP_Request, getUri)
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
 
     /* Get URI from Go via CGO */
-    uri = go_async_get_request_uri(intern->request_id);
+    uri = go_async_get_request_uri(thread_index, intern->request_id);
     if (uri == NULL) {
         RETURN_STRING("/");
     }
@@ -202,7 +255,7 @@ PHP_METHOD(FrankenPHP_Request, getHeaders)
 
     /* Iterate common headers */
     for (int i = 0; common_headers[i] != NULL; i++) {
-        header_value = go_async_get_request_header(intern->request_id, common_headers[i]);
+        header_value = go_async_get_request_header(thread_index, intern->request_id, common_headers[i]);
         if (header_value != NULL) {
             add_assoc_string(return_value, common_headers[i], header_value);
             free(header_value);
@@ -222,7 +275,7 @@ PHP_METHOD(FrankenPHP_Request, getBody)
     intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
 
     /* Get body from Go via CGO */
-    body = go_async_get_request_body(intern->request_id, &length);
+    body = go_async_get_request_body(thread_index, intern->request_id, &length);
     if (body == NULL || length == 0) {
         RETURN_EMPTY_STRING();
     }
@@ -281,6 +334,7 @@ PHP_METHOD(FrankenPHP_Response, write)
 {
     frankenphp_response_object *intern;
     zend_string *data_str;
+    size_t old_len, new_len;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_STR(data_str)
@@ -288,15 +342,15 @@ PHP_METHOD(FrankenPHP_Response, write)
 
     intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
 
-    /* Send headers if not sent */
-    if (!intern->headers_sent) {
-        /* TODO: Send headers via Go CGO */
-        sapi_send_headers();
-        intern->headers_sent = 1;
+    if (!intern->buffer) {
+        intern->buffer = zend_string_copy(data_str);
+    } else {
+        old_len = ZSTR_LEN(intern->buffer);
+        new_len = old_len + ZSTR_LEN(data_str);
+        intern->buffer = zend_string_extend(intern->buffer, new_len, 0);
+        memcpy(ZSTR_VAL(intern->buffer) + old_len, ZSTR_VAL(data_str), ZSTR_LEN(data_str));
+        ZSTR_VAL(intern->buffer)[new_len] = '\0';
     }
-
-    /* MVP: Use blocking write via SAPI (will integrate with go_ub_write later) */
-    PHPWRITE(ZSTR_VAL(data_str), ZSTR_LEN(data_str));
 }
 
 /* Response::end(): void */
@@ -308,14 +362,18 @@ PHP_METHOD(FrankenPHP_Response, end)
 
     intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
 
-    /* Flush any remaining output */
     if (!intern->headers_sent) {
         sapi_send_headers();
         intern->headers_sent = 1;
     }
 
-    /* Notify Go that request is complete */
-    go_async_notify_request_done(intern->request_id);
+    if (intern->buffer && ZSTR_LEN(intern->buffer) > 0) {
+        add_pending_write(intern->request_id, intern->buffer);
+        go_async_response_write(thread_index, intern->request_id,
+                               ZSTR_VAL(intern->buffer), ZSTR_LEN(intern->buffer));
+    }
+
+    go_async_notify_request_done(thread_index, intern->request_id);
 }
 
 /* ============================================================================

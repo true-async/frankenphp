@@ -5,11 +5,13 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/dunglas/frankenphp/internal/fastabs"
 	"github.com/dunglas/frankenphp/internal/state"
@@ -107,6 +109,8 @@ func (w *worker) initAsyncThreads(workersReady *sync.WaitGroup) {
 		thread := getInactivePHPThread()
 
 		thread.requestChan = make(chan contextHolder, w.bufferSize)
+		thread.responseChan = make(chan responseWrite, 100)
+
 		notifier, err := NewAsyncNotifier()
 		if err != nil {
 			panic(fmt.Sprintf("failed to create AsyncNotifier: %v", err))
@@ -121,6 +125,8 @@ func (w *worker) initAsyncThreads(workersReady *sync.WaitGroup) {
 		}
 
 		w.attachThread(thread)
+
+		go thread.responseDispatcher()
 
 		workersReady.Go(func() {
 			thread.state.Set(state.BootRequested)
@@ -328,4 +334,182 @@ func go_async_worker_request_done(threadIndex C.uintptr_t, requestID C.uint64_t)
 	}
 
 	handler.requestMap.Delete(uint64(requestID))
+}
+
+// go_async_get_request_method returns the HTTP method for a request.
+//
+//export go_async_get_request_method
+func go_async_get_request_method(threadIndex C.uintptr_t, requestID C.uint64_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return nil
+	}
+
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		return nil
+	}
+
+	return C.CString(ch.frankenPHPContext.request.Method)
+}
+
+// go_async_get_request_uri returns the request URI.
+//
+//export go_async_get_request_uri
+func go_async_get_request_uri(threadIndex C.uintptr_t, requestID C.uint64_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return nil
+	}
+
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		return nil
+	}
+
+	return C.CString(ch.frankenPHPContext.request.RequestURI)
+}
+
+// go_async_get_request_header returns a specific request header value.
+//
+//export go_async_get_request_header
+func go_async_get_request_header(threadIndex C.uintptr_t, requestID C.uint64_t, headerName *C.char) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return nil
+	}
+
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		return nil
+	}
+
+	name := C.GoString(headerName)
+	value := ch.frankenPHPContext.request.Header.Get(name)
+	if value != "" {
+		return C.CString(value)
+	}
+
+	return nil
+}
+
+// go_async_get_request_body returns the request body.
+// Returns a malloc'd C string that must be freed by the caller.
+//
+//export go_async_get_request_body
+func go_async_get_request_body(threadIndex C.uintptr_t, requestID C.uint64_t, length *C.size_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		if length != nil {
+			*length = 0
+		}
+		return C.CString("")
+	}
+
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		if length != nil {
+			*length = 0
+		}
+		return C.CString("")
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil || ch.frankenPHPContext.request.Body == nil {
+		if length != nil {
+			*length = 0
+		}
+		return C.CString("")
+	}
+
+	body, err := io.ReadAll(ch.frankenPHPContext.request.Body)
+	if err != nil {
+		if length != nil {
+			*length = 0
+		}
+		return C.CString("")
+	}
+
+	if length != nil {
+		*length = C.size_t(len(body))
+	}
+	return C.CString(string(body))
+}
+
+// go_async_notify_request_done is an alias for go_async_worker_request_done
+// for backward compatibility with frankenphp_extension.c
+//
+//export go_async_notify_request_done
+func go_async_notify_request_done(threadIndex C.uintptr_t, requestID C.uint64_t) {
+	go_async_worker_request_done(threadIndex, requestID)
+}
+
+// responseDispatcher runs as a permanent goroutine per thread, reading from responseChan
+// and spawning a new goroutine for each write operation to prevent blocking the PHP thread.
+func (t *phpThread) responseDispatcher() {
+	for write := range t.responseChan {
+		go t.handleWrite(write)
+	}
+}
+
+// handleWrite executes the blocking HTTP write in an isolated goroutine.
+// The data pointer references a PHP zend_string buffer whose lifetime is managed
+// by the C-side pending writes system. Calls back to C via frankenphp_async_write_done
+// when the write completes so the zend_string reference can be released.
+func (t *phpThread) handleWrite(write responseWrite) {
+	handler, ok := t.handler.(*asyncWorkerThread)
+	if !ok {
+		return
+	}
+
+	val, ok := handler.requestMap.Load(write.requestID)
+	if !ok {
+		return
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.responseWriter == nil {
+		return
+	}
+
+	ch.frankenPHPContext.responseWriter.Write(
+		unsafe.Slice((*byte)(write.data), write.length))
+
+	C.frankenphp_async_write_done(C.uintptr_t(t.threadIndex), C.uint64_t(write.requestID))
+}
+
+// go_async_response_write queues response data for asynchronous writing.
+// The data pointer references a PHP zend_string buffer whose lifetime is managed
+// by the C-side pending writes system. This function returns immediately without
+// blocking, allowing PHP coroutines to continue execution while the actual HTTP
+// write happens in a separate goroutine.
+//
+//export go_async_response_write
+func go_async_response_write(threadIndex C.uintptr_t, requestID C.uint64_t, data unsafe.Pointer, length C.size_t) {
+	thread := phpThreads[threadIndex]
+
+	thread.responseChan <- responseWrite{
+		requestID: uint64(requestID),
+		data:      data,
+		length:    int(length),
+	}
 }
