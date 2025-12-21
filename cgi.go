@@ -280,6 +280,10 @@ func splitPos(path string, splitPath []string) int {
 func go_update_request_info(threadIndex C.uintptr_t, info *C.sapi_request_info) {
 	thread := phpThreads[threadIndex]
 	fc := thread.frankenPHPContext()
+	if fc == nil {
+		return
+	}
+
 	request := fc.request
 
 	if request == nil {

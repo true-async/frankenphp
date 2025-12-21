@@ -102,38 +102,30 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 	return w, nil
 }
 
-// initThreads initializes all threads for this async worker.
-// Called during worker startup to prepare thread pool.
-func (w *worker) initAsyncThreads(workersReady *sync.WaitGroup) {
-	for i := 0; i < w.num; i++ {
-		thread := getInactivePHPThread()
+// convertToAsyncWorkerThread prepares an inactive thread to run an async worker.
+// It wires channels/notifier, marks async mode, attaches it to the worker,
+// and switches the handler via setHandler so the handler isn't lost during boot.
+func convertToAsyncWorkerThread(thread *phpThread, w *worker) {
+	thread.requestChan = make(chan contextHolder, w.bufferSize)
+	thread.responseChan = make(chan responseWrite, 100)
 
-		thread.requestChan = make(chan contextHolder, w.bufferSize)
-		thread.responseChan = make(chan responseWrite, 100)
-
-		notifier, err := NewAsyncNotifier()
-		if err != nil {
-			panic(fmt.Sprintf("failed to create AsyncNotifier: %v", err))
-		}
-		thread.asyncNotifier = notifier
-		thread.asyncMode = true
-		thread.handler = &asyncWorkerThread{
-			state:           thread.state,
-			thread:          thread,
-			worker:          w,
-			isBootingScript: true,
-		}
-
-		w.attachThread(thread)
-
-		go thread.responseDispatcher()
-
-		workersReady.Go(func() {
-			thread.state.Set(state.BootRequested)
-			thread.boot()
-			thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
-		})
+	notifier, err := NewAsyncNotifier()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create AsyncNotifier: %v", err))
 	}
+	thread.asyncNotifier = notifier
+	thread.asyncMode = true
+
+	thread.setHandler(&asyncWorkerThread{
+		state:           thread.state,
+		thread:          thread,
+		worker:          w,
+		isBootingScript: true,
+	})
+
+	w.attachThread(thread)
+
+	go thread.responseDispatcher()
 }
 
 // handleRequestAsync dispatches requests using round-robin across worker threads.
@@ -141,7 +133,7 @@ func (w *worker) initAsyncThreads(workersReady *sync.WaitGroup) {
 func (w *worker) handleRequestAsync(ch contextHolder) error {
 	metrics.StartWorkerRequest(w.name)
 
-    // A simple Round Robin algorithm for testing
+	// A simple Round Robin algorithm for testing
 	start := w.rrIndex.Add(1) % uint32(len(w.threads))
 
 	for i := 0; i < len(w.threads); i++ {
@@ -151,8 +143,8 @@ func (w *worker) handleRequestAsync(ch contextHolder) error {
 		select {
 		case thread.requestChan <- ch:
 			if len(thread.requestChan) == 1 && thread.asyncNotifier != nil {
-			    // If the channel was empty, the thread may be waiting for new messages,
-			    // paused in the EventLoop, so we must write a new message to the asyncNotifier.
+				// If the channel was empty, the thread may be waiting for new messages,
+				// paused in the EventLoop, so we must write a new message to the asyncNotifier.
 				thread.asyncNotifier.Notify()
 			}
 			return nil

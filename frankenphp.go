@@ -644,12 +644,12 @@ func go_read_post(threadIndex C.uintptr_t, cBuf *C.char, countBytes C.size_t) (r
 
 //export go_read_cookies
 func go_read_cookies(threadIndex C.uintptr_t) *C.char {
-	request := phpThreads[threadIndex].frankenPHPContext().request
-	if request == nil {
+	fc := phpThreads[threadIndex].frankenPHPContext()
+	if fc == nil || fc.request == nil {
 		return nil
 	}
 
-	cookie := strings.Join(request.Header.Values("Cookie"), "; ")
+	cookie := strings.Join(fc.request.Header.Values("Cookie"), "; ")
 	if cookie == "" {
 		return nil
 	}
@@ -663,8 +663,14 @@ func go_read_cookies(threadIndex C.uintptr_t) *C.char {
 
 //export go_log
 func go_log(threadIndex C.uintptr_t, message *C.char, level C.int) {
-	ctx := phpThreads[threadIndex].context()
-	logger := phpThreads[threadIndex].frankenPHPContext().logger
+	thread := phpThreads[threadIndex]
+	fc := thread.frankenPHPContext()
+	if fc == nil {
+		return
+	}
+
+	ctx := thread.context()
+	logger := fc.logger
 
 	m := C.GoString(message)
 	le := syslogLevelInfo

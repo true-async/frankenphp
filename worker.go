@@ -71,17 +71,17 @@ func initWorkers(opt []workerOpt) error {
 	startupFailChan = make(chan error, totalThreadsToStart)
 
 	for _, w := range workers {
-		if w.isAsync {
-			w.initAsyncThreads(&workersReady)
-		} else {
-			for i := 0; i < w.num; i++ {
-				thread := getInactivePHPThread()
+		for i := 0; i < w.num; i++ {
+			thread := getInactivePHPThread()
+			if w.isAsync {
+				convertToAsyncWorkerThread(thread, w)
+			} else {
 				convertToWorkerThread(thread, w)
-
-				workersReady.Go(func() {
-					thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
-				})
 			}
+
+			workersReady.Go(func() {
+				thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
+			})
 		}
 	}
 
