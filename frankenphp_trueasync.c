@@ -15,6 +15,7 @@
 #include "php_main.h"
 #include "SAPI.h"
 #include "Zend/zend_async_API.h"
+#include "Zend/zend_exceptions.h"
 #include "frankenphp.h"
 
 #include <fcntl.h>
@@ -344,6 +345,18 @@ bool frankenphp_suspend_main_coroutine(void)
 
     ZEND_ASYNC_SUSPEND();
     zend_async_waker_clean(coroutine);
+
+    if (UNEXPECTED(EG(exception) != NULL)) {
+        const zend_class_entry *cancel_ce = ZEND_ASYNC_GET_EXCEPTION_CE(ZEND_ASYNC_EXCEPTION_CANCELLATION);
+
+        if (EG(exception)->ce != cancel_ce &&
+            !instanceof_function(EG(exception)->ce, cancel_ce)) {
+            php_error(E_WARNING, "FrankenPHP TrueAsync: clearing lingering exception (%s)",
+                      EG(exception)->ce && EG(exception)->ce->name ? ZSTR_VAL(EG(exception)->ce->name) : "unknown");
+        }
+
+        zend_clear_exception();
+    }
 
     return true;
 }
