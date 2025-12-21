@@ -410,7 +410,16 @@ func ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) error 
 
 	if fc.worker != nil {
 		if fc.worker.isAsync {
-			return fc.worker.handleRequestAsync(ch)
+			if err := fc.worker.handleRequestAsync(ch); err != nil {
+				return err
+			}
+			// Keep handler alive until async response is done to avoid net/http finishing with empty body.
+			select {
+			case <-fc.done:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
 		}
 		return fc.worker.handleRequest(ch)
 	}
