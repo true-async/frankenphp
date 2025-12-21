@@ -1,11 +1,13 @@
 #!/bin/bash
 set -e
 
+cd /home/edmond/frankenphp/caddy/frankenphp
+
 export CGO_CFLAGS="$(php-config --includes)"
 export CGO_LDFLAGS="$(php-config --ldflags) $(php-config --libs)"
 
-echo "Building FrankenPHP with:"
-echo "CGO_CFLAGS=$CGO_CFLAGS"
-echo "CGO_LDFLAGS=$CGO_LDFLAGS"
+echo "Building frankenphp with trueasync..."
+go build -tags "trueasync,nowatcher"
 
-go build -tags "trueasync,nowatcher" -o frankenphp
+echo "Build completed: $(file ./frankenphp)"
+ls -lh ./frankenphp
