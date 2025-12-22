@@ -696,14 +696,6 @@ func getLogger(threadIndex C.uintptr_t) (*slog.Logger, context.Context) {
 
 //export go_log
 func go_log(threadIndex C.uintptr_t, message *C.char, level C.int) {
-	thread := phpThreads[threadIndex]
-	fc := thread.frankenPHPContext()
-	if fc == nil {
-		return
-	}
-
-	ctx := thread.context()
-	logger := fc.logger
 	logger, ctx := getLogger(threadIndex)
 
 	m := C.GoString(message)
