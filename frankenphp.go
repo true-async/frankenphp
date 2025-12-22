@@ -408,6 +408,7 @@ func ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) error 
 		return err
 	}
 
+	// Detect if a worker is available to handle this request
 	if fc.worker != nil {
 		if fc.worker.isAsync {
 			if err := fc.worker.handleRequestAsync(ch); err != nil {
@@ -424,6 +425,7 @@ func ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) error 
 		return fc.worker.handleRequest(ch)
 	}
 
+	// If no worker was available, send the request to non-worker threads
 	return handleRequestWithRegularPHPThreads(ch)
 }
 
@@ -673,6 +675,25 @@ func go_read_cookies(threadIndex C.uintptr_t) *C.char {
 	return C.CString(cookie)
 }
 
+func getLogger(threadIndex C.uintptr_t) (*slog.Logger, context.Context) {
+	ctxHolder := phpThreads[threadIndex]
+	if ctxHolder == nil {
+		return globalLogger, globalCtx
+	}
+
+	ctx := ctxHolder.context()
+	if ctxHolder.handler == nil {
+		return globalLogger, ctx
+	}
+
+	fCtx := ctxHolder.frankenPHPContext()
+	if fCtx == nil || fCtx.logger == nil {
+		return globalLogger, ctx
+	}
+
+	return fCtx.logger, ctx
+}
+
 //export go_log
 func go_log(threadIndex C.uintptr_t, message *C.char, level C.int) {
 	thread := phpThreads[threadIndex]
@@ -683,6 +704,7 @@ func go_log(threadIndex C.uintptr_t, message *C.char, level C.int) {
 
 	ctx := thread.context()
 	logger := fc.logger
+	logger, ctx := getLogger(threadIndex)
 
 	m := C.GoString(message)
 	le := syslogLevelInfo
@@ -716,8 +738,7 @@ func go_log(threadIndex C.uintptr_t, message *C.char, level C.int) {
 
 //export go_log_attrs
 func go_log_attrs(threadIndex C.uintptr_t, message *C.zend_string, cLevel C.zend_long, cAttrs *C.zval) *C.char {
-	ctx := phpThreads[threadIndex].context()
-	logger := phpThreads[threadIndex].frankenPHPContext().logger
+	logger, ctx := getLogger(threadIndex)
 
 	level := slog.Level(cLevel)
 
