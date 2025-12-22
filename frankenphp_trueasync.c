@@ -100,6 +100,9 @@ void frankenphp_enter_async_mode(void)
     /* Async loop is stopping: free TLS pending write table */
     frankenphp_async_pending_writes_destroy();
 
+    zend_async_set_heartbeat_handler(old_heartbeat_handler);
+    old_heartbeat_handler = NULL;
+
     close_request_event();
     if (async_request_callback != NULL) {
         zval_ptr_dtor(async_request_callback);
