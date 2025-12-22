@@ -95,5 +95,6 @@ bool frankenphp_register_request_notifier(int fd, uintptr_t thread_index);
 bool frankenphp_suspend_main_coroutine(void);
 void frankenphp_handle_request_async(uint64_t request_id);
 void frankenphp_async_write_done(uintptr_t thread_index, uint64_t request_id);
+void frankenphp_async_pending_writes_destroy(void);
 
 #endif

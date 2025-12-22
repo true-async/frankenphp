@@ -32,15 +32,12 @@ extern __thread bool is_async_mode_requested;
 extern __thread zval *async_request_callback;
 
 /* ============================================================================
- * Pending Writes Management
+ * Pending Writes Management (zero-copy handoff to Go)
  * ============================================================================ */
 
 static __thread HashTable pending_writes_by_request;
 static __thread bool pending_writes_initialized = false;
 
-/*
- * Initializes the pending writes hash table for the current thread.
- */
 static void init_pending_writes(void) {
     if (!pending_writes_initialized) {
         zend_hash_init(&pending_writes_by_request, 8, NULL, NULL, 0);
@@ -48,20 +45,30 @@ static void init_pending_writes(void) {
     }
 }
 
-/*
- * Stores the response buffer zend_string for a request.
- * Increments refcount to prevent deallocation during async write.
- */
 static void add_pending_write(uint64_t request_id, zend_string *data) {
     init_pending_writes();
     zend_string_addref(data);
     zend_hash_index_update_ptr(&pending_writes_by_request, request_id, data);
 }
 
-/*
- * Called by Go when async write completes.
- * Releases the zend_string reference.
- */
+void frankenphp_async_pending_writes_destroy(void) {
+    zend_string *data;
+
+    if (!pending_writes_initialized) {
+        return;
+    }
+
+    ZEND_HASH_FOREACH_PTR(&pending_writes_by_request, data) {
+        if (data) {
+            zend_string_release(data);
+        }
+    }
+    ZEND_HASH_FOREACH_END();
+
+    zend_hash_destroy(&pending_writes_by_request);
+    pending_writes_initialized = false;
+}
+
 void frankenphp_async_write_done(uintptr_t thread_index, uint64_t request_id) {
     zend_string *data;
 
@@ -357,20 +364,25 @@ PHP_METHOD(FrankenPHP_Response, write)
 PHP_METHOD(FrankenPHP_Response, end)
 {
     frankenphp_response_object *intern;
+    size_t buffer_len = 0;
 
     ZEND_PARSE_PARAMETERS_NONE();
 
     intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+    if (intern->buffer) {
+        buffer_len = ZSTR_LEN(intern->buffer);
+    }
 
     if (!intern->headers_sent) {
         sapi_send_headers();
         intern->headers_sent = 1;
     }
 
-    if (intern->buffer && ZSTR_LEN(intern->buffer) > 0) {
-        add_pending_write(intern->request_id, intern->buffer);
+    if (buffer_len > 0) {
         go_async_response_write(thread_index, intern->request_id,
-                               ZSTR_VAL(intern->buffer), ZSTR_LEN(intern->buffer));
+                               ZSTR_VAL(intern->buffer), buffer_len);
+        add_pending_write(intern->request_id, intern->buffer);
+        return;
     }
 
     go_async_notify_request_done(thread_index, intern->request_id);

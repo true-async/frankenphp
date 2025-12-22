@@ -321,7 +321,25 @@ func go_async_worker_get_context(threadIndex C.uintptr_t, requestID C.uint64_t) 
 // Called from C when request processing is finished.
 //
 //export go_async_worker_request_done
-func go_async_worker_request_done(threadIndex C.uintptr_t, requestID C.uint64_t) {}
+func go_async_worker_request_done(threadIndex C.uintptr_t, requestID C.uint64_t) {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return
+	}
+
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return
+	}
+
+	handler.requestMap.Delete(uint64(requestID))
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext != nil {
+		ch.frankenPHPContext.closeContext()
+	}
+}
 
 // go_async_get_request_method returns the HTTP method for a request.
 //
@@ -483,10 +501,7 @@ func (t *phpThread) handleWrite(write responseWrite) {
 
 	C.frankenphp_async_write_done(C.uintptr_t(t.threadIndex), C.uint64_t(write.requestID))
 
-	if ch.frankenPHPContext != nil {
-		ch.frankenPHPContext.closeContext()
-	}
-	handler.requestMap.Delete(write.requestID)
+	go_async_worker_request_done(C.uintptr_t(t.threadIndex), C.uint64_t(write.requestID))
 }
 
 // go_async_response_write queues response data for asynchronous writing.
@@ -504,5 +519,4 @@ func go_async_response_write(threadIndex C.uintptr_t, requestID C.uint64_t, data
 		data:      data,
 		length:    int(length),
 	}
-
 }
