@@ -24,7 +24,7 @@ HttpServer::onRequest(function (Request $request, Response $response) {
         'method' => $method,
         'uri' => $uri,
         'total_coroutines' => count(\Async\get_coroutines()),
-        'memory' => memory_get_usage(true),
+        'memory' => round(memory_get_usage(true) / 1024 / 1024, 2),
         'timestamp' => date('Y-m-d H:i:s'),
         'headers_count' => count($headers),
         'body_length' => strlen($body),
