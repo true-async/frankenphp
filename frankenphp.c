@@ -28,6 +28,7 @@
 
 #include "_cgo_export.h"
 #include "frankenphp_arginfo.h"
+#include "frankenphp.h"
 
 #if defined(PHP_WIN32) && defined(ZTS)
 ZEND_TSRMLS_CACHE_DEFINE()
@@ -1000,6 +1001,15 @@ static void *php_main(void *arg) {
   zend_signal_startup();
 
   sapi_startup(&frankenphp_sapi_module);
+
+  // Для async режима заменяем SAPI методы на async-специфичные
+  if (go_frankenphp_is_async_thread(0)) {
+    frankenphp_sapi_module.ub_write = frankenphp_async_ub_write;
+    frankenphp_sapi_module.flush = frankenphp_async_sapi_flush;
+    frankenphp_sapi_module.send_headers = frankenphp_async_send_headers;
+    frankenphp_sapi_module.read_post = frankenphp_async_read_post;
+    frankenphp_sapi_module.read_cookies = frankenphp_async_read_cookies;
+  }
 
 #ifdef ZEND_MAX_EXECUTION_TIMERS
   /* overwrite php.ini with custom user settings */

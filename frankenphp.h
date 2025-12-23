@@ -5,6 +5,7 @@
 #include <Zend/zend_types.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <SAPI.h>
 
 #ifndef FRANKENPHP_VERSION
 #define FRANKENPHP_VERSION dev
@@ -96,5 +97,12 @@ bool frankenphp_suspend_main_coroutine(void);
 void frankenphp_handle_request_async(uint64_t request_id);
 void frankenphp_async_write_done(uintptr_t thread_index, uint64_t request_id);
 void frankenphp_async_pending_writes_destroy(void);
+
+/* Async-specific SAPI methods */
+size_t frankenphp_async_ub_write(const char *str, size_t str_length);
+int frankenphp_async_send_headers(sapi_headers_struct *sapi_headers);
+void frankenphp_async_sapi_flush(void *server_context);
+size_t frankenphp_async_read_post(char *buffer, size_t count_bytes);
+char *frankenphp_async_read_cookies(void);
 
 #endif

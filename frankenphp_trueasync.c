@@ -24,6 +24,8 @@
 extern __thread uintptr_t thread_index;
 extern __thread zval *async_request_callback;
 
+extern void go_log(uintptr_t thread_index, char *message, int syslog_type_int);
+
 extern int go_async_worker_get_notification_fd(uintptr_t thread_index);
 extern void go_async_worker_clear_notification(uintptr_t thread_index);
 extern uint64_t go_async_worker_check_requests(uintptr_t thread_index);
@@ -366,4 +368,49 @@ bool frankenphp_suspend_main_coroutine(void)
     }
 
     return true;
+}
+
+/*
+ * Async-specific SAPI methods
+ * These replace the default sync SAPI methods when running in async mode
+ */
+
+/* frankenphp_async_ub_write - handles echo/print output in async mode */
+size_t frankenphp_async_ub_write(const char *str, size_t str_length) {
+    if (str[str_length] == '\0') {
+        go_log(thread_index, (char *)str, 6);
+    } else {
+        char *log_str = emalloc(str_length + 1);
+        memcpy(log_str, str, str_length);
+        log_str[str_length] = '\0';
+
+        go_log(thread_index, log_str, 6);
+
+        efree(log_str);
+    }
+
+    return str_length;
+}
+
+/* frankenphp_async_send_headers - handles header() calls in async mode */
+int frankenphp_async_send_headers(sapi_headers_struct *sapi_headers) {
+    // TODO: В async режиме headers отправляются через Response::setHeader()
+    return SAPI_HEADER_SENT_SUCCESSFULLY;
+}
+
+/* frankenphp_async_sapi_flush - handles flush() calls in async mode */
+void frankenphp_async_sapi_flush(void *server_context) {
+    go_log(thread_index, "FrankenPHP Async: flush() called, use Response::end() instead", 6);
+}
+
+/* frankenphp_async_read_post - handles POST data reading in async mode */
+size_t frankenphp_async_read_post(char *buffer, size_t count_bytes) {
+    // TODO: В async режиме POST данные читаются через Request::getBody()
+    return 0;
+}
+
+/* frankenphp_async_read_cookies - handles cookie reading in async mode */
+char *frankenphp_async_read_cookies(void) {
+    // TODO: В async режиме cookies читаются через Request::getHeaders()
+    return NULL;
 }
