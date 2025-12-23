@@ -213,6 +213,10 @@ func addPreparedEnvToServer(fc *frankenPHPContext, trackVarsArray *C.zval) {
 func go_register_variables(threadIndex C.uintptr_t, trackVarsArray *C.zval) {
 	thread := phpThreads[threadIndex]
 	fc := thread.frankenPHPContext()
+	// For TrueAsync frankenPHPContext is not used
+	if fc == nil {
+		return
+	}
 
 	if fc.request != nil {
 		addKnownVariablesToServer(fc, trackVarsArray)
