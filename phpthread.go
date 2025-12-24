@@ -15,8 +15,7 @@ import (
 // responseWrite represents queued response data for async writing
 type responseWrite struct {
 	requestID uint64
-	data      unsafe.Pointer
-	length    int
+	data      []byte // Owned copy of response data
 }
 
 // representation of the actual underlying PHP thread

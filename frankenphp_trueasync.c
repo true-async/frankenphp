@@ -99,9 +99,6 @@ void frankenphp_enter_async_mode(void)
 
     frankenphp_suspend_main_coroutine();
 
-    /* Async loop is stopping: free TLS pending write table */
-    frankenphp_async_pending_writes_destroy();
-
     zend_async_set_heartbeat_handler(old_heartbeat_handler);
     old_heartbeat_handler = NULL;
 

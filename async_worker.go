@@ -496,10 +496,7 @@ func (t *phpThread) handleWrite(write responseWrite) {
 		return
 	}
 
-	ch.frankenPHPContext.responseWriter.Write(
-		unsafe.Slice((*byte)(write.data), write.length))
-
-	C.frankenphp_async_write_done(C.uintptr_t(t.threadIndex), C.uint64_t(write.requestID))
+	ch.frankenPHPContext.responseWriter.Write(write.data)
 
 	go_async_worker_request_done(C.uintptr_t(t.threadIndex), C.uint64_t(write.requestID))
 }
@@ -514,9 +511,11 @@ func (t *phpThread) handleWrite(write responseWrite) {
 func go_async_response_write(threadIndex C.uintptr_t, requestID C.uint64_t, data unsafe.Pointer, length C.size_t) {
 	thread := phpThreads[threadIndex]
 
+	dataCopy := make([]byte, int(length))
+	copy(dataCopy, unsafe.Slice((*byte)(data), int(length)))
+
 	thread.responseChan <- responseWrite{
 		requestID: uint64(requestID),
-		data:      data,
-		length:    int(length),
+		data:      dataCopy,
 	}
 }

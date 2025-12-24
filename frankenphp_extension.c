@@ -32,56 +32,9 @@ extern __thread bool is_async_mode_requested;
 extern __thread zval *async_request_callback;
 
 /* ============================================================================
- * Pending Writes Management (zero-copy handoff to Go)
+ * Pending Writes Management - REMOVED
+ * Now we copy data to Go memory, so no need for pending writes tracking
  * ============================================================================ */
-
-static __thread HashTable pending_writes_by_request;
-static __thread bool pending_writes_initialized = false;
-
-static void init_pending_writes(void) {
-    if (!pending_writes_initialized) {
-        zend_hash_init(&pending_writes_by_request, 8, NULL, NULL, 0);
-        pending_writes_initialized = true;
-    }
-}
-
-static void add_pending_write(uint64_t request_id, zend_string *data) {
-    init_pending_writes();
-    zend_string_addref(data);
-    zend_hash_index_update_ptr(&pending_writes_by_request, request_id, data);
-}
-
-void frankenphp_async_pending_writes_destroy(void) {
-    zend_string *data;
-
-    if (!pending_writes_initialized) {
-        return;
-    }
-
-    ZEND_HASH_FOREACH_PTR(&pending_writes_by_request, data) {
-        if (data) {
-            zend_string_release(data);
-        }
-    }
-    ZEND_HASH_FOREACH_END();
-
-    zend_hash_destroy(&pending_writes_by_request);
-    pending_writes_initialized = false;
-}
-
-void frankenphp_async_write_done(uintptr_t thread_index, uint64_t request_id) {
-    zend_string *data;
-
-    if (!pending_writes_initialized) {
-        return;
-    }
-
-    data = zend_hash_index_find_ptr(&pending_writes_by_request, request_id);
-    if (data) {
-        zend_string_release(data);
-        zend_hash_index_del(&pending_writes_by_request, request_id);
-    }
-}
 
 /* Class entry pointers */
 static zend_class_entry *frankenphp_httpserver_ce;
@@ -157,6 +110,7 @@ static void frankenphp_response_free_object(zend_object *object) {
 
     if (intern->buffer) {
         zend_string_release(intern->buffer);
+        intern->buffer = NULL;
     }
 
     zend_object_std_dtor(&intern->std);
@@ -381,7 +335,6 @@ PHP_METHOD(FrankenPHP_Response, end)
     if (buffer_len > 0) {
         go_async_response_write(thread_index, intern->request_id,
                                ZSTR_VAL(intern->buffer), buffer_len);
-        add_pending_write(intern->request_id, intern->buffer);
         return;
     }
 
