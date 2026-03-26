@@ -143,9 +143,7 @@ func (w *worker) handleRequestAsync(ch contextHolder) error {
 
 		select {
 		case thread.requestChan <- ch:
-			if len(thread.requestChan) == 1 && thread.asyncNotifier != nil {
-				// If the channel was empty, the thread may be waiting for new messages,
-				// paused in the EventLoop, so we must write a new message to the asyncNotifier.
+			if thread.asyncNotifier != nil && !thread.notified.Swap(true) {
 				thread.asyncNotifier.Notify()
 			}
 			return nil
@@ -266,6 +264,8 @@ func go_async_worker_check_requests(threadIndex C.uintptr_t) C.uint64_t {
 		handler.requestMap.Store(requestID, ch)
 		return C.uint64_t(requestID)
 	default:
+		// Channel is empty — reset notified flag so next send will Notify
+		thread.notified.Store(false)
 		return 0
 	}
 }

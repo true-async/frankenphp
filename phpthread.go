@@ -7,6 +7,7 @@ import (
 	"context"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/dunglas/frankenphp/internal/state"
@@ -32,6 +33,7 @@ type phpThread struct {
 	sandboxedEnv  map[string]*C.zend_string
 	asyncNotifier *AsyncNotifier
 	asyncMode     bool
+	notified      atomic.Bool
 }
 
 // threadHandler defines how the callbacks from the C thread should be handled
