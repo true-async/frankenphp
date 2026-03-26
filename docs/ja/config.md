@@ -1,16 +1,36 @@
 # 設定
 
-FrankenPHP、Caddy、そしてMercureやVulcainモジュールは、[Caddyでサポートされる形式](https://caddyserver.com/docs/getting-started#your-first-config)を使用して設定できます。
+FrankenPHP、Caddy、そして[Mercure](mercure.md)や[Vulcain](https://vulcain.rocks)モジュールは、[Caddyでサポートされる形式](https://caddyserver.com/docs/getting-started#your-first-config)を使用して設定できます。
 
-[Dockerイメージ](docker.md)では、`Caddyfile`は`/etc/frankenphp/Caddyfile`に配置されています。
-静的バイナリは、`frankenphp run`コマンドを実行したディレクトリ内の`Caddyfile`を参照します。
-また、`-c`または`--config`オプションでカスタムのパスを指定できます。
+最も一般的な形式は`Caddyfile`で、シンプルで人間が読めるテキスト形式です。
+デフォルトでは、FrankenPHPは現在のディレクトリにある`Caddyfile`を探します。
+`-c`または`--config`オプションでカスタムパスを指定できます。
 
-PHP自体の設定は[`php.ini` ファイルを使用](https://www.php.net/manual/en/configuration.file.php)して行えます。
+PHPアプリケーションを配信するための最小限の`Caddyfile`を以下に示します：
 
-インストール方法に応じて、PHPインタープリターは上記いずれかの場所にある設定ファイルを参照します。
+```caddyfile
+# レスポンスするホスト名
+localhost
+
+# オプションで、ファイルを配信するディレクトリ。指定しない場合は現在のディレクトリがデフォルト
+#root public/
+php_server
+```
+
+より多くの機能を有効にし、便利な環境変数を提供するより高度な`Caddyfile`は、[FrankenPHPリポジトリ](https://github.com/php/frankenphp/blob/main/caddy/frankenphp/Caddyfile)およびDockerイメージに同梱されています。
+
+PHP自体は、[`php.ini` ファイルを使用](https://www.php.net/manual/en/configuration.file.php)して設定できます。
+
+インストール方法に応じて、FrankenPHPとPHPインタープリターは以下の場所に記載された設定ファイルを探します。
 
 ## Docker
+
+FrankenPHP:
+
+- `/etc/frankenphp/Caddyfile`: メインの設定ファイル
+- `/etc/frankenphp/Caddyfile.d/*.caddyfile`: 自動的にロードされる追加の設定ファイル
+
+PHP:
 
 - `php.ini`: `/usr/local/etc/php/php.ini`（デフォルトでは`php.ini`は含まれていません）
 - 追加の設定ファイル: `/usr/local/etc/php/conf.d/*.ini`
@@ -20,25 +40,37 @@ PHP自体の設定は[`php.ini` ファイルを使用](https://www.php.net/manua
 ```dockerfile
 FROM dunglas/frankenphp
 
-# 本番環境：
+# Production:
 RUN cp $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini
 
-# または開発環境：
+# Or development:
 RUN cp $PHP_INI_DIR/php.ini-development $PHP_INI_DIR/php.ini
 ```
 
 ## RPMおよびDebianパッケージ
 
-- `php.ini`: `/etc/frankenphp/php.ini`（本番環境向けのプリセットの`php.ini`ファイルがデフォルトで提供されます）
-- 追加の設定ファイル: `/etc/frankenphp/php.d/*.ini`
-- PHP拡張モジュール: `/usr/lib/frankenphp/modules/`
+FrankenPHP:
+
+- `/etc/frankenphp/Caddyfile`: メインの設定ファイル
+- `/etc/frankenphp/Caddyfile.d/*.caddyfile`: 自動的にロードされる追加の設定ファイル
+
+PHP:
+
+- `php.ini`: `/etc/php-zts/php.ini`（本番環境向けのプリセットの`php.ini`ファイルがデフォルトで提供されます）
+- 追加の設定ファイル: `/etc/php-zts/conf.d/*.ini`
 
 ## 静的バイナリ
+
+FrankenPHP:
+
+- 現在の作業ディレクトリ: `Caddyfile`
+
+PHP:
 
 - `php.ini`: `frankenphp run`または`frankenphp php-server`を実行したディレクトリ内、なければ`/etc/frankenphp/php.ini`を参照
 - 追加の設定ファイル: `/etc/frankenphp/php.d/*.ini`
 - PHP拡張モジュール: ロードできません、バイナリ自体にバンドルする必要があります
-- [PHPソース](https://github.com/php/php-src/)で提供される`php.ini-production`または`php.ini-development`のいずれかをコピーしてください
+- [PHPソース](https://github.com/php/php-src/)で提供される`php.ini-production`または`php.ini-development`のいずれかをコピーしてください。
 
 ## Caddyfileの設定
 
@@ -55,8 +87,7 @@ localhost {
 }
 ```
 
-グローバルオプションを使用してFrankenPHPを明示的に設定することもできます：
-`frankenphp`の[グローバルオプション](https://caddyserver.com/docs/caddyfile/concepts#global-options)を使用してFrankenPHPを構成できます。
+FrankenPHPは、`frankenphp`の[グローバルオプション](https://caddyserver.com/docs/caddyfile/concepts#global-options)を使用して明示的に設定することもできます：
 
 ```caddyfile
 {
@@ -64,6 +95,7 @@ localhost {
 		num_threads <num_threads> # 開始するPHPスレッド数を設定します。デフォルト: 利用可能なCPU数の2倍。
 		max_threads <num_threads> # 実行時に追加で開始できるPHPスレッドの最大数を制限します。デフォルト: num_threads。 'auto'を設定可能。
 		max_wait_time <duration> # リクエストがタイムアウトする前にPHPのスレッドが空くのを待つ最大時間を設定します。デフォルト: 無効。
+		max_idle_time <duration> # 自動スケーリングされたスレッドが非アクティブ化されるまでにアイドル状態である最大時間を設定します。デフォルト: 5秒。
 		php_ini <key> <value> # php.iniのディレクティブを設定します。複数のディレクティブを設定するために何度でも使用できます。
 		worker {
 			file <path> # ワーカースクリプトのパスを設定します。
@@ -152,7 +184,7 @@ php_server [<matcher>] {
 	file_server off # 組み込みのfile_serverディレクティブを無効にします。
 	worker { # このサーバー固有のワーカーを作成します。複数のワーカーに対して複数回指定できます。
 		file <path> # ワーカースクリプトへのパスを設定します。php_serverのルートからの相対パスとなります。
-		num <num> # 起動するPHPスレッド数を設定します。デフォルトは利用可能なスレッド数の 2 倍です。
+		num <num> # 起動するPHPスレッド数を設定します。デフォルトは利用可能なCPU数の2倍です。
 		name <name> # ログとメトリクスで使用されるワーカーの名前を設定します。デフォルト: ワーカーファイルの絶対パス。php_server ブロックで定義されている場合は、常にm#で始まります。
 		watch <path> # ファイルの変更を監視するパスを設定する。複数のパスに対して複数回指定することができる。
 		env <key> <value> # 追加の環境変数を指定された値に設定する。複数の環境変数を指定する場合は、複数回指定することができます。このワーカーの環境変数もphp_serverの親から継承されますが、 ここで上書きすることもできます。
@@ -181,8 +213,10 @@ PHPファイルに変更を加えても即座には反映されません。
 }
 ```
 
-`watch`ディレクトリが指定されていない場合、`./**/*.{php,yaml,yml,twig,env}`にフォールバックします。
-これは、FrankenPHPプロセスが開始されたディレクトリおよびそのサブディレクトリ内のすべての`.php`、`.yaml`、`.yml`、`.twig`、`.env`ファイルすべてを監視します。
+この機能は、[ホットリロード](hot-reload.md)と組み合わせてよく使用されます。
+
+`watch`ディレクトリが指定されていない場合、`./**/*.{env,php,twig,yaml,yml}`にフォールバックします。
+これは、FrankenPHPプロセスが開始されたディレクトリおよびそのサブディレクトリ内のすべての`.env`、`.php`、`.twig`、`.yaml`、`.yml`ファイルすべてを監視します。
 代わりに、[シェルのファイル名パターン](https://pkg.go.dev/path/filepath#Match)を使用して
 1つ以上のディレクトリを指定することもできます：
 
@@ -230,34 +264,6 @@ PHPファイルに変更を加えても即座には反映されません。
 }
 ```
 
-### フルデュプレックス（HTTP/1）
-
-HTTP/1.xを使用する場合、全体のボディが読み取られる前にレスポンスを書き込めるようにするため、
-フルデュプレックスモードを有効にすることが望ましい場合があります（例：WebSocket、Server-Sent Eventsなど）。
-
-これは明示的に有効化する必要がある設定で、`Caddyfile`のグローバルオプションに追加する必要があります：
-
-```caddyfile
-{
-  servers {
-    enable_full_duplex
-  }
-}
-```
-
-> [!CAUTION]
->
-> このオプションを有効にすると、フルデュプレックスをサポートしない古いHTTP/1.xクライアントでデッドロックが発生する可能性があります。
-> これは`CADDY_GLOBAL_OPTIONS`環境設定を使用しても設定できます：
-
-```sh
-CADDY_GLOBAL_OPTIONS="servers {
-  enable_full_duplex
-}"
-```
-
-この設定の詳細については、[Caddyドキュメント](https://caddyserver.com/docs/caddyfile/options#enable-full-duplex)をご覧ください。
-
 ## 環境変数
 
 以下の環境変数を使用することで、`Caddyfile`を直接変更せずにCaddyディレクティブを注入できます：
@@ -284,7 +290,7 @@ FPM や CLI SAPI と同様に、環境変数はデフォルトで`$_SERVER`ス�
     frankenphp {
         php_ini memory_limit 256M
 
-        # または
+        # or
 
         php_ini {
             memory_limit 256M
@@ -293,6 +299,43 @@ FPM や CLI SAPI と同様に、環境変数はデフォルトで`$_SERVER`ス�
     }
 }
 ```
+
+### HTTPSの無効化
+
+デフォルトでは、FrankenPHPは`localhost`を含むすべてのホスト名に対してHTTPSを自動的に有効にします。
+HTTPSを無効にしたい場合（例えば開発環境で）、`SERVER_NAME`環境変数を`http://`または`:80`に設定できます：
+
+または、[Caddyのドキュメント](https://caddyserver.com/docs/automatic-https#activation)に記載されている他のすべての方法を使用することもできます。
+
+`localhost`ホスト名の代わりに`127.0.0.1` IPアドレスでHTTPSを使用したい場合は、[既知の問題](known-issues.md#using-https127001-with-docker)セクションを読んでください。
+
+### フルデュプレックス（HTTP/1）
+
+HTTP/1.xを使用する場合、全体のボディが読み取られる前にレスポンスを書き込めるようにするため、
+フルデュプレックスモードを有効にすることが望ましい場合があります（例：[Mercure](mercure.md)、WebSocket、Server-Sent Eventsなど）。
+
+これは明示的に有効化する必要がある設定で、`Caddyfile`のグローバルオプションに追加する必要があります：
+
+```caddyfile
+{
+  servers {
+    enable_full_duplex
+  }
+}
+```
+
+> [!CAUTION]
+>
+> このオプションを有効にすると、フルデュプレックスをサポートしない古いHTTP/1.xクライアントでデッドロックが発生する可能性があります。
+> これは`CADDY_GLOBAL_OPTIONS`環境設定を使用しても設定できます：
+
+```sh
+CADDY_GLOBAL_OPTIONS="servers {
+  enable_full_duplex
+}"
+```
+
+この設定の詳細については、[Caddyドキュメント](https://caddyserver.com/docs/caddyfile/options#enable-full-duplex)をご覧ください。
 
 ## デバッグモードの有効化
 
@@ -304,3 +347,78 @@ docker run -v $PWD:/app/public \
     -p 80:80 -p 443:443 -p 443:443/udp \
     dunglas/frankenphp
 ```
+
+## Shell Completion
+
+FrankenPHPはBash、Zsh、Fish、およびPowerShell用のシェル補完機能を内蔵しています。これにより、すべてのコマンド（`php-server`、`php-cli`、`extension-init`などのカスタムコマンドを含む）とそのフラグのオートコンプリートが可能になります。
+
+### Bash
+
+現在のシェルセッションで補完を読み込むには：
+
+```console
+source <(frankenphp completion bash)
+```
+
+新しいセッションごとに補完を読み込むには、以下を実行してください：
+
+**Linux:**
+
+```console
+frankenphp completion bash > /usr/share/bash-completion/completions/frankenphp
+```
+
+**macOS:**
+
+```console
+frankenphp completion bash > $(brew --prefix)/share/bash-completion/completions/frankenphp
+```
+
+### Zsh
+
+シェル補完がまだ環境で有効になっていない場合は、有効にする必要があります。以下のコマンドを一度実行してください：
+
+```console
+echo "autoload -U compinit; compinit" >> ~/.zshrc
+```
+
+各セッションで補完を読み込むには、一度実行してください：
+
+```console
+frankenphp completion zsh > "${fpath[1]}/_frankenphp"
+```
+
+この設定を有効にするには、新しいシェルを起動する必要があります。
+
+### Fish
+
+現在のシェルセッションで補完を読み込むには：
+
+```console
+frankenphp completion fish | source
+```
+
+新しいセッションごとに補完を読み込むには、一度実行してください：
+
+```console
+frankenphp completion fish > ~/.config/fish/completions/frankenphp.fish
+```
+
+### PowerShell
+
+現在のシェルセッションで補完を読み込むには：
+
+```powershell
+frankenphp completion powershell | Out-String | Invoke-Expression
+```
+
+新しいセッションごとに補完を読み込むには、一度実行してください：
+
+```powershell
+frankenphp completion powershell | Out-File -FilePath (Join-Path (Split-Path $PROFILE) "frankenphp.ps1")
+Add-Content -Path $PROFILE -Value '. (Join-Path (Split-Path $PROFILE) "frankenphp.ps1")'
+```
+
+この設定を有効にするには、新しいシェルを起動する必要があります。
+
+この設定を有効にするには、新しいシェルを起動する必要があります。

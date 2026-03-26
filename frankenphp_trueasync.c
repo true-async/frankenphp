@@ -333,7 +333,7 @@ bool frankenphp_suspend_main_coroutine(void)
     event->dispose = frankenphp_server_wait_event_dispose;
 
     /* Create waker for coroutine */
-    if (UNEXPECTED(zend_async_waker_new(coroutine) == NULL)) {
+    if (UNEXPECTED(zend_async_waker_define(coroutine) == NULL)) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to create waker");
         event->dispose(event);
         return false;

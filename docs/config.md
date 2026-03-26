@@ -12,7 +12,7 @@ A minimal `Caddyfile` to serve a PHP application is shown below:
 # The hostname to respond to
 localhost
 
-# Optionaly, the directory to serve files from, otherwise defaults to the current directory
+# Optionally, the directory to serve files from, otherwise defaults to the current directory
 #root public/
 php_server
 ```
@@ -96,6 +96,7 @@ You can also explicitly configure FrankenPHP using the [global option](https://c
 		num_threads <num_threads> # Sets the number of PHP threads to start. Default: 2x the number of available CPUs.
 		max_threads <num_threads> # Limits the number of additional PHP threads that can be started at runtime. Default: num_threads. Can be set to 'auto'.
 		max_wait_time <duration> # Sets the maximum time a request may wait for a free PHP thread before timing out. Default: disabled.
+		max_idle_time <duration> # Sets the maximum time an autoscaled thread may be idle before being deactivated. Default: 5s.
 		php_ini <key> <value> # Set a php.ini directive. Can be used several times to set multiple directives.
 		worker {
 			file <path> # Sets the path to the worker script.
@@ -213,8 +214,10 @@ This is useful for development environments.
 }
 ```
 
-If the `watch` directory is not specified, it will fall back to `./**/*.{php,yaml,yml,twig,env}`,
-which watches all `.php`, `.yaml`, `.yml`, `.twig` and `.env` files in the directory and subdirectories
+This feature is often used in combination with [hot reload](hot-reload.md).
+
+If the `watch` directory is not specified, it will fall back to `./**/*.{env,php,twig,yaml,yml}`,
+which watches all `.env`, `.php`, `.twig`, `.yaml` and `.yml` files in the directory and subdirectories
 where the FrankenPHP process was started. You can instead also specify one or more directories via a
 [shell filename pattern](https://pkg.go.dev/path/filepath#Match):
 
@@ -239,7 +242,7 @@ where the FrankenPHP process was started. You can instead also specify one or mo
 
 The file watcher is based on [e-dant/watcher](https://github.com/e-dant/watcher).
 
-## Matching the worker to a path
+## Matching the Worker To a Path
 
 In traditional PHP applications, scripts are always placed in the public directory.
 This is also true for worker scripts, which are treated like any other PHP script.
@@ -345,3 +348,78 @@ docker run -v $PWD:/app/public \
     -p 80:80 -p 443:443 -p 443:443/udp \
     dunglas/frankenphp
 ```
+
+## Shell Completion
+
+FrankenPHP provides built-in shell completion support for Bash, Zsh, Fish, and PowerShell. This enables autocompletion for all commands (including custom commands like `php-server`, `php-cli`, and `extension-init`) and their flags.
+
+### Bash
+
+To load completions in your current shell session:
+
+```console
+source <(frankenphp completion bash)
+```
+
+To load completions for every new session, run:
+
+**Linux:**
+
+```console
+frankenphp completion bash > /usr/share/bash-completion/completions/frankenphp
+```
+
+**macOS:**
+
+```console
+frankenphp completion bash > $(brew --prefix)/share/bash-completion/completions/frankenphp
+```
+
+### Zsh
+
+If shell completion is not already enabled in your environment, you will need to enable it. You can execute the following once:
+
+```console
+echo "autoload -U compinit; compinit" >> ~/.zshrc
+```
+
+To load completions for each session, execute once:
+
+```console
+frankenphp completion zsh > "${fpath[1]}/_frankenphp"
+```
+
+You will need to start a new shell for this setup to take effect.
+
+### Fish
+
+To load completions in your current shell session:
+
+```console
+frankenphp completion fish | source
+```
+
+To load completions for every new session, execute once:
+
+```console
+frankenphp completion fish > ~/.config/fish/completions/frankenphp.fish
+```
+
+### PowerShell
+
+To load completions in your current shell session:
+
+```powershell
+frankenphp completion powershell | Out-String | Invoke-Expression
+```
+
+To load completions for every new session, execute once:
+
+```powershell
+frankenphp completion powershell | Out-File -FilePath (Join-Path (Split-Path $PROFILE) "frankenphp.ps1")
+Add-Content -Path $PROFILE -Value '. (Join-Path (Split-Path $PROFILE) "frankenphp.ps1")'
+```
+
+You will need to start a new shell for this setup to take effect.
+
+You will need to start a new shell for this setup to take effect.

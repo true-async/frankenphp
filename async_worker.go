@@ -54,10 +54,10 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 
 	allowPathMatching := !strings.HasPrefix(o.name, "m#")
 
-	if w := getWorkerByPath(absFileName); w != nil && allowPathMatching {
+	if w := workersByPath[absFileName]; w != nil && allowPathMatching {
 		return nil, fmt.Errorf("two workers cannot have the same filename: %q", absFileName)
 	}
-	if w := getWorkerByName(o.name); w != nil {
+	if w := workersByName[o.name]; w != nil {
 		return nil, fmt.Errorf("two workers cannot have the same name: %q", o.name)
 	}
 

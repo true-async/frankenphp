@@ -35,6 +35,8 @@ The following command will trigger a restart if any file ending in `.php` in the
 frankenphp php-server --worker /path/to/your/worker/script.php --watch="/path/to/your/app/**/*.php"
 ```
 
+This feature is often used in combination with [hot reloading](hot-reload.md).
+
 ## Symfony Runtime
 
 > [!TIP]
@@ -69,9 +71,6 @@ The following example shows how to create your own worker script without relying
 ```php
 <?php
 // public/index.php
-
-// Prevent worker script termination when a client connection is interrupted
-ignore_user_abort(true);
 
 // Boot your app
 require __DIR__.'/vendor/autoload.php';
