@@ -157,7 +157,7 @@ frankenphp.WithWorkerDrainTimeout(15 * time.Second)
 
 ## Execution model notes
 
-- Each async thread owns a request queue (`buffer_size`, default 20). If all queues are full you get `ErrAllBuffersFull` -> 503.
+- By default each async thread uses an unbuffered channel (synchronous handoff). Set `buffer_size` to add a per-thread request queue (0..1000). If all threads are busy (or all buffers are full) you get `ErrAllBuffersFull` -> 503.
 - Requests wake the PHP scheduler via a notifier (eventfd on Linux, pipe elsewhere) plus a heartbeat fast path to reduce wakeup latency.
 - `Response::write()` hands the PHP buffer to Go without copies; the Go side streams it and then calls back to free the pending write. Always call `end()` even for empty bodies.
 - Shutdown sends a sentinel through the queue; the PHP loop frees pending writes and restores the heartbeat handler.

@@ -14,7 +14,7 @@
 			file /home/edmond/frankenphp/async_entrypoint.php
 			num 1
 			async
-			buffer_size 20
+			# buffer_size 0 (default: unbuffered)
 			match /*
 		}
 	}

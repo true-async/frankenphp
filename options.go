@@ -292,8 +292,8 @@ func WithWorkerAsync(asyncMode bool) WorkerOption {
 
 func WithWorkerBufferSize(size int) WorkerOption {
 	return func(o *workerOpt) error {
-		if size < 1 || size > 1000 {
-			return fmt.Errorf("buffer_size must be between 1 and 1000, got %d", size)
+		if size < 0 || size > 1000 {
+			return fmt.Errorf("buffer_size must be between 0 and 1000, got %d", size)
 		}
 		o.bufferSize = size
 		return nil

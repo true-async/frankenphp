@@ -44,7 +44,7 @@ type workerConfig struct {
 	MaxConsecutiveFailures int `json:"max_consecutive_failures,omitempty"`
 	// Async enables async worker mode for handling multiple concurrent requests per thread
 	Async bool `json:"async,omitempty"`
-	// BufferSize sets the buffer size for async workers (1-1000, default: 20)
+	// BufferSize sets the buffer size for async workers (0-1000, default: 0 = unbuffered)
 	BufferSize int `json:"buffer_size,omitempty"`
 	// DrainTimeout is the grace period for async workers to finish in-flight requests during restart (default: 30s)
 	DrainTimeout caddy.Duration `json:"drain_timeout,omitempty"`
@@ -174,8 +174,8 @@ func unmarshalWorker(d *caddyfile.Dispenser) (workerConfig, error) {
 			if err != nil {
 				return wc, d.WrapErr(err)
 			}
-			if v < 1 || v > 1000 {
-				return wc, d.Errf("buffer_size must be between 1 and 1000")
+			if v > 1000 {
+				return wc, d.Errf("buffer_size must be between 0 and 1000")
 			}
 
 			wc.BufferSize = int(v)
