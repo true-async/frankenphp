@@ -29,8 +29,9 @@ type phpThread struct {
 	drainChan     chan struct{}
 	handlerMu     sync.RWMutex
 	handler       threadHandler
+	contextMu     sync.RWMutex
 	state         *state.ThreadState
-	sandboxedEnv  map[string]*C.zend_string
+	requestCount  atomic.Int64
 	asyncNotifier *AsyncNotifier
 	asyncMode     bool
 	notified      atomic.Bool
@@ -168,10 +169,13 @@ func (thread *phpThread) context() context.Context {
 
 func (thread *phpThread) name() string {
 	thread.handlerMu.RLock()
-	name := thread.handler.name()
-	thread.handlerMu.RUnlock()
+	defer thread.handlerMu.RUnlock()
 
-	return name
+	if thread.handler == nil {
+		return "unknown"
+	}
+
+	return thread.handler.name()
 }
 
 // Pin a string that is not null-terminated
