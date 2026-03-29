@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -45,6 +46,8 @@ type workerConfig struct {
 	Async bool `json:"async,omitempty"`
 	// BufferSize sets the buffer size for async workers (1-1000, default: 20)
 	BufferSize int `json:"buffer_size,omitempty"`
+	// DrainTimeout is the grace period for async workers to finish in-flight requests during restart (default: 30s)
+	DrainTimeout caddy.Duration `json:"drain_timeout,omitempty"`
 
 	options        []frankenphp.WorkerOption
 	requestOptions []frankenphp.RequestOption
@@ -151,6 +154,17 @@ func unmarshalWorker(d *caddyfile.Dispenser) (workerConfig, error) {
 			wc.MaxConsecutiveFailures = v
 		case "async":
 			wc.Async = true
+		case "drain_timeout":
+			if !d.NextArg() {
+				return wc, d.ArgErr()
+			}
+
+			dur, err := time.ParseDuration(d.Val())
+			if err != nil {
+				return wc, d.WrapErr(err)
+			}
+
+			wc.DrainTimeout = caddy.Duration(dur)
 		case "buffer_size":
 			if !d.NextArg() {
 				return wc, d.ArgErr()
@@ -166,7 +180,7 @@ func unmarshalWorker(d *caddyfile.Dispenser) (workerConfig, error) {
 
 			wc.BufferSize = int(v)
 		default:
-			return wc, wrongSubDirectiveError("worker", "name, file, num, env, watch, match, max_consecutive_failures, max_threads, async, buffer_size", v)
+			return wc, wrongSubDirectiveError("worker", "name, file, num, env, watch, match, max_consecutive_failures, max_threads, async, buffer_size, drain_timeout", v)
 		}
 	}
 

@@ -169,6 +169,9 @@ func (f *FrankenPHPApp) Start() error {
 			if w.BufferSize > 0 {
 				w.options = append(w.options, frankenphp.WithWorkerBufferSize(w.BufferSize))
 			}
+			if w.DrainTimeout > 0 {
+				w.options = append(w.options, frankenphp.WithWorkerDrainTimeout(time.Duration(w.DrainTimeout)))
+			}
 		}
 
 		f.opts = append(f.opts, frankenphp.WithWorkers(w.Name, repl.ReplaceKnown(w.FileName, ""), w.Num, w.options...))

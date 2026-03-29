@@ -54,7 +54,6 @@ Example `Caddyfile`:
 			file examples/async_entrypoint.php
 			num 1
 			async              # enable TrueAsync worker threads
-			buffer_size 20     # per-thread request queue (1..1000)
 			match *            # route everything to the async worker
 		}
 	}
@@ -117,6 +116,44 @@ HttpServer::onRequest(function (Request $request, Response $response) {
 API surface:
 - `Request::getMethod()`, `getUri()`, `getHeaders()`, `getBody()` (body is fully read once).
 - `Response::setStatus()`, `setHeader()`, `write()`, `end()` (call `end()` to flush and release the pending write reference; multiple `write()` calls are buffered).
+
+## Worker restart (green-blue)
+
+Async workers support graceful restart without losing in-flight requests.
+When `RestartWorkers()` is triggered (via admin API, file watcher, or config reload):
+
+1. Old threads are **detached** from the worker — no new requests are routed to them.
+2. In-flight requests get a grace period (`drain_timeout`, default 30 s) to finish.
+3. Old threads are shut down and their resources (notifier, channels) are released.
+4. Fresh threads are booted with the updated PHP code.
+
+During the drain window new requests receive `503 (ErrAllBuffersFull)`.
+After the new threads reach `Ready`, traffic resumes normally.
+
+### Caddyfile option
+
+```caddyfile
+worker {
+    file entrypoint.php
+    num 2
+    async
+    drain_timeout 30s   # grace period for in-flight requests (default 30s)
+}
+```
+
+### Admin API
+
+Trigger a restart at runtime (all workers, sync and async):
+
+```bash
+curl -X POST http://localhost:2019/frankenphp/workers/restart
+```
+
+### Go API
+
+```go
+frankenphp.WithWorkerDrainTimeout(15 * time.Second)
+```
 
 ## Execution model notes
 
