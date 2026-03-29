@@ -108,6 +108,22 @@ func (thread *phpThread) shutdown() {
 	}
 }
 
+// cleanupAsyncResources releases async-specific resources so the thread
+// can be re-booted as a fresh posix thread (green-blue restart).
+func (thread *phpThread) cleanupAsyncResources() {
+	if thread.asyncNotifier != nil {
+		thread.asyncNotifier.Close()
+		thread.asyncNotifier = nil
+	}
+	if thread.responseChan != nil {
+		close(thread.responseChan)
+		thread.responseChan = nil
+	}
+	thread.asyncMode = false
+	thread.notified.Store(false)
+	thread.requestChan = make(chan contextHolder)
+}
+
 // setHandler changes the thread handler safely
 // must be called from outside the PHP thread
 func (thread *phpThread) setHandler(handler threadHandler) {

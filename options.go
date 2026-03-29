@@ -54,6 +54,7 @@ type workerOpt struct {
 	onServerShutdown       func()
 	asyncMode              bool
 	bufferSize             int
+	drainTimeout           time.Duration
 }
 
 // WithContext sets the main context to use.
@@ -295,6 +296,15 @@ func WithWorkerBufferSize(size int) WorkerOption {
 			return fmt.Errorf("buffer_size must be between 1 and 1000, got %d", size)
 		}
 		o.bufferSize = size
+		return nil
+	}
+}
+
+// WithWorkerDrainTimeout sets the grace period for async workers to finish
+// in-flight requests during a restart before being forcefully shut down.
+func WithWorkerDrainTimeout(d time.Duration) WorkerOption {
+	return func(o *workerOpt) error {
+		o.drainTimeout = d
 		return nil
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/dunglas/frankenphp/internal/fastabs"
@@ -72,6 +73,11 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 		bufferSize = 20
 	}
 
+	drainTimeout := o.drainTimeout
+	if drainTimeout == 0 {
+		drainTimeout = 30 * time.Second
+	}
+
 	w := &worker{
 		name:                   o.name,
 		fileName:               absFileName,
@@ -86,6 +92,7 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 		onThreadShutdown:       o.onThreadShutdown,
 		isAsync:                true,
 		bufferSize:             bufferSize,
+		drainTimeout:           drainTimeout,
 	}
 
 	w.configureMercure(&o)
@@ -203,6 +210,19 @@ func (h *asyncWorkerThread) afterScriptExecution(exitStatus int) {
 	} else {
 		h.failureCount = 0
 	}
+}
+
+// isDrained returns true if there are no buffered or in-flight requests on this thread.
+func (h *asyncWorkerThread) isDrained() bool {
+	if len(h.thread.requestChan) > 0 {
+		return false
+	}
+	drained := true
+	h.requestMap.Range(func(_, _ any) bool {
+		drained = false
+		return false
+	})
+	return drained
 }
 
 func (h *asyncWorkerThread) frankenPHPContext() *frankenPHPContext {

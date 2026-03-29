@@ -4,6 +4,7 @@ package frankenphp
 import "C"
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,9 +36,10 @@ type worker struct {
 	queuedRequests         atomic.Int32
 
 	// Async worker fields
-	isAsync    bool
-	bufferSize int
-	rrIndex    atomic.Uint32
+	isAsync      bool
+	bufferSize   int
+	drainTimeout time.Duration
+	rrIndex      atomic.Uint32
 }
 
 var (
@@ -179,6 +181,21 @@ func newWorker(o workerOpt) (*worker, error) {
 // EXPERIMENTAL: DrainWorkers finishes all worker scripts before a graceful shutdown
 func DrainWorkers() {
 	_ = drainWorkerThreads()
+
+	// Also drain async workers
+	for _, w := range workers {
+		if !w.isAsync {
+			continue
+		}
+		w.threadMutex.RLock()
+		for _, thread := range w.threads {
+			if !thread.state.RequestSafeStateChange(state.ShuttingDown) {
+				continue
+			}
+			thread.shutdown()
+		}
+		w.threadMutex.RUnlock()
+	}
 }
 
 func drainWorkerThreads() []*phpThread {
@@ -193,16 +210,8 @@ func drainWorkerThreads() []*phpThread {
 
 		for _, thread := range worker.threads {
 			if thread.asyncMode {
-				if !thread.state.RequestSafeStateChange(state.ShuttingDown) {
-					ready.Done()
-					continue
-				}
-				// wake async loop and send shutdown sentinel
-				thread.shutdown()
-				go func(thread *phpThread) {
-					thread.state.WaitFor(state.Done)
-					ready.Done()
-				}(thread)
+				// async workers are restarted separately via restartAsyncWorker
+				ready.Done()
 				continue
 			}
 
@@ -240,10 +249,108 @@ func RestartWorkers() {
 
 	threadsToRestart := drainWorkerThreads()
 
+	// Restart sync workers
 	for _, thread := range threadsToRestart {
 		thread.drainChan = make(chan struct{})
 		thread.state.Set(state.Ready)
 	}
+
+	// Green-blue restart async workers
+	for _, w := range workers {
+		if !w.isAsync {
+			continue
+		}
+		restartAsyncWorker(w)
+	}
+}
+
+// restartAsyncWorker performs a green-blue restart of an async worker:
+// detach old threads, drain in-flight requests, shutdown, then boot fresh threads.
+func restartAsyncWorker(w *worker) {
+	// Step 1: capture and detach old threads (no new requests will be routed to them)
+	w.threadMutex.Lock()
+	oldThreads := make([]*phpThread, len(w.threads))
+	copy(oldThreads, w.threads)
+	w.threads = w.threads[:0]
+	w.threadMutex.Unlock()
+
+	if len(oldThreads) == 0 {
+		// nothing to drain, just boot new threads
+		bootAsyncWorkerThreads(w)
+		return
+	}
+
+	// Step 2: drain in-flight requests with timeout
+	deadline := time.After(w.drainTimeout)
+drainLoop:
+	for {
+		allDrained := true
+		for _, thread := range oldThreads {
+			handler, ok := thread.handler.(*asyncWorkerThread)
+			if !ok {
+				continue
+			}
+			if !handler.isDrained() {
+				allDrained = false
+				break
+			}
+		}
+		if allDrained {
+			if globalLogger.Enabled(globalCtx, slog.LevelInfo) {
+				globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "async worker drained gracefully", slog.String("worker", w.name))
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			if globalLogger.Enabled(globalCtx, slog.LevelWarn) {
+				globalLogger.LogAttrs(globalCtx, slog.LevelWarn, "async worker drain timeout, forcing shutdown", slog.String("worker", w.name), slog.Duration("timeout", w.drainTimeout))
+			}
+			break drainLoop
+		case <-time.After(100 * time.Millisecond):
+			// poll again
+		}
+	}
+
+	// Step 3: shutdown old threads
+	var wg sync.WaitGroup
+	for _, thread := range oldThreads {
+		wg.Add(1)
+		go func(thread *phpThread) {
+			defer wg.Done()
+			if !thread.state.RequestSafeStateChange(state.ShuttingDown) {
+				return
+			}
+			thread.shutdown()
+			thread.cleanupAsyncResources()
+			thread.state.Set(state.Reserved)
+		}(thread)
+	}
+	wg.Wait()
+
+	// Step 4: boot new threads (green)
+	bootAsyncWorkerThreads(w)
+}
+
+// bootAsyncWorkerThreads boots fresh async worker threads for the given worker.
+func bootAsyncWorkerThreads(w *worker) {
+	for i := 0; i < w.num; i++ {
+		thread := getInactivePHPThread()
+		if thread == nil {
+			if globalLogger.Enabled(globalCtx, slog.LevelError) {
+				globalLogger.LogAttrs(globalCtx, slog.LevelError, "no thread available for async worker restart", slog.String("worker", w.name))
+			}
+			continue
+		}
+		convertToAsyncWorkerThread(thread, w)
+	}
+
+	// Wait for new threads to be ready
+	w.threadMutex.RLock()
+	for _, thread := range w.threads {
+		thread.state.WaitFor(state.Ready, state.ShuttingDown, state.Done)
+	}
+	w.threadMutex.RUnlock()
 }
 
 func (worker *worker) attachThread(thread *phpThread) {
