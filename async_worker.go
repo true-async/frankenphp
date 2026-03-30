@@ -69,6 +69,11 @@ func newAsyncWorker(o workerOpt) (*worker, error) {
 	o.env["FRANKENPHP_WORKER\x00"] = "1"
 
 	bufferSize := o.bufferSize
+	if bufferSize == 0 {
+		bufferSize = 1
+	} else if bufferSize > 10 {
+		bufferSize = 10
+	}
 
 	drainTimeout := o.drainTimeout
 	if drainTimeout == 0 {
