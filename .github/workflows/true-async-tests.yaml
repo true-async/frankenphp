@@ -31,7 +31,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/php-install
-          key: php-trueasync-v1
+          key: php-trueasync-v2
 
       - name: Install build dependencies
         if: steps.php-cache.outputs.cache-hit != 'true'
@@ -53,13 +53,25 @@ jobs:
           tar -xf v1.49.0.tar.gz
           cd libuv-1.49.0
           mkdir build && cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-          ninja
-          DESTDIR=$HOME/php-install ninja install
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$HOME/php-install/usr/local \
+            -DBUILD_TESTING=OFF
+          ninja && ninja install
 
       - name: Build PHP 8.6-dev with TrueAsync
         if: steps.php-cache.outputs.cache-hit != 'true'
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/../php-install/usr/local/lib/pkgconfig
+          LDFLAGS: -L${{ github.workspace }}/../php-install/usr/local/lib
+          CPPFLAGS: -I${{ github.workspace }}/../php-install/usr/local/include
+          LD_LIBRARY_PATH: ${{ github.workspace }}/../php-install/usr/local/lib
         run: |
+          export PKG_CONFIG_PATH=$HOME/php-install/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+          export LDFLAGS="-L$HOME/php-install/usr/local/lib $LDFLAGS"
+          export CPPFLAGS="-I$HOME/php-install/usr/local/include $CPPFLAGS"
+          export LD_LIBRARY_PATH=$HOME/php-install/usr/local/lib:$LD_LIBRARY_PATH
+
           git clone --depth 1 --branch true-async-stable \
             https://github.com/true-async/php-src.git /tmp/php-src
           git clone --depth 1 --branch main \
@@ -86,6 +98,7 @@ jobs:
           make -j"$(nproc)"
           make install
 
+      # ── Install cached PHP + libuv to system ─────────────────────
       - name: Install PHP to system
         run: |
           sudo cp -a ~/php-install/usr/local/* /usr/local/
@@ -127,7 +140,7 @@ jobs:
       # ── Run async integration tests ──────────────────────────────
       - name: Create test Caddyfile
         run: |
-          cat > /tmp/Caddyfile.async-test <<EOF
+          cat > /tmp/Caddyfile.async-test << CEOF
           {
             frankenphp
           }
@@ -144,7 +157,7 @@ jobs:
               }
             }
           }
-          EOF
+          CEOF
 
       - name: Start FrankenPHP
         run: |
