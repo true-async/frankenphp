@@ -25,6 +25,8 @@ HttpServer::onRequest(function (Request $request, Response $response) {
         '/test/request-info' => handleRequestInfo($request, $response),
         '/test/response-getters' => handleResponseGetters($request, $response),
         '/test/redirect' => handleRedirect($request, $response),
+        '/test/parsed-body' => handleParsedBody($request, $response),
+        '/test/upload' => handleUpload($request, $response),
         '/test/echo' => handleEcho($request, $response),
         default => handleNotFound($request, $response),
     };
@@ -162,6 +164,48 @@ function handleResponseGetters(Request $request, Response $response): void {
 
 function handleRedirect(Request $request, Response $response): void {
     $response->redirect('https://example.com/target', 301);
+    $response->end();
+}
+
+function handleParsedBody(Request $request, Response $response): void {
+    $response->setStatus(200);
+    $response->setHeader('Content-Type', 'application/json');
+    $response->write(json_encode($request->getParsedBody()));
+    $response->end();
+}
+
+function handleUpload(Request $request, Response $response): void {
+    $files = $request->getUploadedFiles();
+    $result = [];
+
+    foreach ($files as $field => $file) {
+        if (is_array($file)) {
+            $result[$field] = [];
+            foreach ($file as $f) {
+                $result[$field][] = [
+                    'name' => $f->getName(),
+                    'type' => $f->getType(),
+                    'size' => $f->getSize(),
+                    'error' => $f->getError(),
+                    'has_tmp' => !empty($f->getTmpName()),
+                    'content' => file_get_contents($f->getTmpName()),
+                ];
+            }
+        } else {
+            $result[$field] = [
+                'name' => $file->getName(),
+                'type' => $file->getType(),
+                'size' => $file->getSize(),
+                'error' => $file->getError(),
+                'has_tmp' => !empty($file->getTmpName()),
+                'content' => file_get_contents($file->getTmpName()),
+            ];
+        }
+    }
+
+    $response->setStatus(200);
+    $response->setHeader('Content-Type', 'application/json');
+    $response->write(json_encode($result));
     $response->end();
 }
 

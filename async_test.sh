@@ -148,6 +148,29 @@ echo "[Response: redirect]"
 assert_status "301 redirect" "$BASE/test/redirect" "301"
 assert_header "Location header" "$BASE/test/redirect" "Location" "https://example.com/target"
 
+echo "[Request: getParsedBody]"
+assert_json_field "form field name" "$BASE/test/parsed-body" "['name']" "John" "-X POST -d 'name=John&age=30'"
+assert_json_field "form field age" "$BASE/test/parsed-body" "['age']" "30" "-X POST -d 'name=John&age=30'"
+
+echo "[Request: getUploadedFiles]"
+UPLOAD_TMP=$(mktemp)
+echo -n "hello file content" > "$UPLOAD_TMP"
+UPLOAD_JSON=$(curl -s -F "file=@${UPLOAD_TMP};filename=test.txt" "$BASE/test/upload")
+rm -f "$UPLOAD_TMP"
+# Validate upload response fields
+for check in "['file']['name']|test.txt" "['file']['content']|hello file content" "['file']['error']|0" "['file']['size']|18"; do
+    field="${check%%|*}"
+    expected="${check#*|}"
+    got=$(echo "$UPLOAD_JSON" | php -r "echo json_decode(file_get_contents('php://stdin'), true)$field ?? 'NULL';")
+    if [ "$got" = "$expected" ]; then
+        echo "  PASS: upload $field"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: upload $field (expected=$expected got=$got)"
+        FAIL=$((FAIL + 1))
+    fi
+done
+
 echo "[Request: echo]"
 assert_json_field "echo method" "$BASE/test/echo" "['method']" "POST" "-X POST -d test"
 assert_json_field "echo body" "$BASE/test/echo" "['body']" "test" "-X POST -d test"

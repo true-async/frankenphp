@@ -16,6 +16,7 @@
 #include "ext/standard/info.h"
 #include "zend_smart_str.h"
 #include "ext/standard/url.h"
+#include "ext/json/php_json.h"
 #include "SAPI.h"
 #include "frankenphp.h"
 #include <pthread.h>
@@ -30,6 +31,8 @@ extern char *go_async_get_request_host(uintptr_t thread_index, uint64_t request_
 extern char *go_async_get_request_remote_addr(uintptr_t thread_index, uint64_t request_id);
 extern char *go_async_get_request_proto(uintptr_t thread_index, uint64_t request_id);
 extern bool go_async_get_request_is_tls(uintptr_t thread_index, uint64_t request_id);
+extern char *go_async_get_parsed_body(uintptr_t thread_index, uint64_t request_id, size_t *length);
+extern char *go_async_get_uploaded_files(uintptr_t thread_index, uint64_t request_id, size_t *length);
 extern void go_async_notify_request_done(uintptr_t thread_index, uint64_t request_id);
 extern void go_async_response_write(uintptr_t thread_index, uint64_t request_id, void *data, size_t length);
 extern void go_async_response_complete(uintptr_t thread_index, uint64_t request_id, int status_code, void *headers_data, size_t headers_len, void *body_data, size_t body_len);
@@ -48,6 +51,7 @@ extern __thread zval *async_request_callback;
 static zend_class_entry *frankenphp_httpserver_ce;
 static zend_class_entry *frankenphp_request_ce;
 static zend_class_entry *frankenphp_response_ce;
+static zend_class_entry *frankenphp_uploadedfile_ce;
 
 /* Object handlers */
 static zend_object_handlers frankenphp_request_object_handlers;
@@ -463,6 +467,210 @@ PHP_METHOD(FrankenPHP_Request, getBody)
     free(body);
 }
 
+/* Request::getParsedBody(): array */
+PHP_METHOD(FrankenPHP_Request, getParsedBody)
+{
+    frankenphp_request_object *intern;
+    char *data;
+    size_t length = 0;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+
+    array_init(return_value);
+
+    data = go_async_get_parsed_body(thread_index, intern->request_id, &length);
+    if (data == NULL || length == 0) {
+        return;
+    }
+
+    /* Parse "name\0value\0" pairs */
+    size_t i = 0;
+    while (i < length) {
+        const char *name = data + i;
+        size_t name_len = strlen(name);
+        i += name_len + 1;
+        if (i >= length) break;
+
+        const char *value = data + i;
+        size_t value_len = strlen(value);
+        i += value_len + 1;
+
+        add_assoc_stringl(return_value, name, value, value_len);
+    }
+
+    free(data);
+}
+
+/* Helper: create an UploadedFile object from metadata */
+static void frankenphp_create_uploaded_file(zval *return_value,
+    const char *field_name, const char *file_name, const char *mime_type,
+    const char *tmp_name, zend_long size, zend_long error)
+{
+    object_init_ex(return_value, frankenphp_uploadedfile_ce);
+
+    zend_update_property_string(frankenphp_uploadedfile_ce, Z_OBJ_P(return_value),
+        "name", sizeof("name") - 1, file_name);
+    zend_update_property_string(frankenphp_uploadedfile_ce, Z_OBJ_P(return_value),
+        "type", sizeof("type") - 1, mime_type);
+    zend_update_property_string(frankenphp_uploadedfile_ce, Z_OBJ_P(return_value),
+        "tmpName", sizeof("tmpName") - 1, tmp_name);
+    zend_update_property_long(frankenphp_uploadedfile_ce, Z_OBJ_P(return_value),
+        "size", sizeof("size") - 1, size);
+    zend_update_property_long(frankenphp_uploadedfile_ce, Z_OBJ_P(return_value),
+        "error", sizeof("error") - 1, error);
+}
+
+/* Request::getUploadedFiles(): array */
+PHP_METHOD(FrankenPHP_Request, getUploadedFiles)
+{
+    frankenphp_request_object *intern;
+    char *json_data;
+    size_t length = 0;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+
+    array_init(return_value);
+
+    json_data = go_async_get_uploaded_files(thread_index, intern->request_id, &length);
+    if (json_data == NULL || length == 0) {
+        return;
+    }
+
+    /* Decode JSON array of file metadata */
+    zval json_arr;
+    php_json_decode(&json_arr, json_data, length, 1, PHP_JSON_PARSER_DEFAULT_DEPTH);
+    free(json_data);
+
+    if (Z_TYPE(json_arr) != IS_ARRAY) {
+        zval_ptr_dtor(&json_arr);
+        return;
+    }
+
+    /* Convert JSON objects to UploadedFile objects */
+    zval *entry;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL(json_arr), entry) {
+        if (Z_TYPE_P(entry) != IS_ARRAY) continue;
+
+        zval *zfield = zend_hash_str_find(Z_ARRVAL_P(entry), "field_name", sizeof("field_name") - 1);
+        zval *zfile  = zend_hash_str_find(Z_ARRVAL_P(entry), "file_name", sizeof("file_name") - 1);
+        zval *zmime  = zend_hash_str_find(Z_ARRVAL_P(entry), "mime_type", sizeof("mime_type") - 1);
+        zval *ztmp   = zend_hash_str_find(Z_ARRVAL_P(entry), "tmp_name", sizeof("tmp_name") - 1);
+        zval *zsize  = zend_hash_str_find(Z_ARRVAL_P(entry), "size", sizeof("size") - 1);
+        zval *zerr   = zend_hash_str_find(Z_ARRVAL_P(entry), "error", sizeof("error") - 1);
+
+        if (!zfield || !zfile) continue;
+
+        const char *field_name = Z_TYPE_P(zfield) == IS_STRING ? Z_STRVAL_P(zfield) : "";
+        const char *file_name = Z_TYPE_P(zfile) == IS_STRING ? Z_STRVAL_P(zfile) : "";
+        const char *mime_type = zmime && Z_TYPE_P(zmime) == IS_STRING ? Z_STRVAL_P(zmime) : "";
+        const char *tmp_name = ztmp && Z_TYPE_P(ztmp) == IS_STRING ? Z_STRVAL_P(ztmp) : "";
+        zend_long size = zsize ? zval_get_long(zsize) : 0;
+        zend_long error = zerr ? zval_get_long(zerr) : 0;
+
+        /* Check if field already has an entry (multiple files for same field) */
+        zval *existing = zend_hash_str_find(Z_ARRVAL_P(return_value), field_name, strlen(field_name));
+        if (existing) {
+            /* Convert to array if not already */
+            if (Z_TYPE_P(existing) != IS_ARRAY) {
+                zval arr, old;
+                ZVAL_COPY(&old, existing);
+                array_init(&arr);
+                zend_hash_next_index_insert(Z_ARRVAL(arr), &old);
+                zval_ptr_dtor(existing);
+                ZVAL_COPY_VALUE(existing, &arr);
+            }
+            zval file_obj;
+            frankenphp_create_uploaded_file(&file_obj, field_name, file_name, mime_type, tmp_name, size, error);
+            zend_hash_next_index_insert(Z_ARRVAL_P(existing), &file_obj);
+        } else {
+            zval file_obj;
+            frankenphp_create_uploaded_file(&file_obj, field_name, file_name, mime_type, tmp_name, size, error);
+            add_assoc_zval(return_value, field_name, &file_obj);
+        }
+    } ZEND_HASH_FOREACH_END();
+
+    zval_ptr_dtor(&json_arr);
+}
+
+/* ============================================================================
+ * UploadedFile Class Methods
+ * ============================================================================ */
+
+/* UploadedFile::getName(): string */
+PHP_METHOD(FrankenPHP_UploadedFile, getName) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    zval *prop = zend_read_property(frankenphp_uploadedfile_ce, Z_OBJ_P(ZEND_THIS), "name", sizeof("name") - 1, 1, NULL);
+    RETURN_COPY(prop);
+}
+
+/* UploadedFile::getType(): string */
+PHP_METHOD(FrankenPHP_UploadedFile, getType) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    zval *prop = zend_read_property(frankenphp_uploadedfile_ce, Z_OBJ_P(ZEND_THIS), "type", sizeof("type") - 1, 1, NULL);
+    RETURN_COPY(prop);
+}
+
+/* UploadedFile::getSize(): int */
+PHP_METHOD(FrankenPHP_UploadedFile, getSize) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    zval *prop = zend_read_property(frankenphp_uploadedfile_ce, Z_OBJ_P(ZEND_THIS), "size", sizeof("size") - 1, 1, NULL);
+    RETURN_COPY(prop);
+}
+
+/* UploadedFile::getTmpName(): string */
+PHP_METHOD(FrankenPHP_UploadedFile, getTmpName) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    zval *prop = zend_read_property(frankenphp_uploadedfile_ce, Z_OBJ_P(ZEND_THIS), "tmpName", sizeof("tmpName") - 1, 1, NULL);
+    RETURN_COPY(prop);
+}
+
+/* UploadedFile::getError(): int */
+PHP_METHOD(FrankenPHP_UploadedFile, getError) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    zval *prop = zend_read_property(frankenphp_uploadedfile_ce, Z_OBJ_P(ZEND_THIS), "error", sizeof("error") - 1, 1, NULL);
+    RETURN_COPY(prop);
+}
+
+/* UploadedFile::moveTo(string $path): bool */
+PHP_METHOD(FrankenPHP_UploadedFile, moveTo) {
+    zend_string *destination;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STR(destination)
+    ZEND_PARSE_PARAMETERS_END();
+
+    zval *tmp_prop = zend_read_property(frankenphp_uploadedfile_ce, Z_OBJ_P(ZEND_THIS), "tmpName", sizeof("tmpName") - 1, 1, NULL);
+    if (Z_TYPE_P(tmp_prop) != IS_STRING || Z_STRLEN_P(tmp_prop) == 0) {
+        RETURN_FALSE;
+    }
+
+    /* Try rename first (fast, same filesystem), fall back to copy+delete */
+    if (rename(Z_STRVAL_P(tmp_prop), ZSTR_VAL(destination)) == 0) {
+        RETURN_TRUE;
+    }
+
+    /* Cross-filesystem: copy then delete */
+    php_stream *src = php_stream_open_wrapper(Z_STRVAL_P(tmp_prop), "rb", REPORT_ERRORS, NULL);
+    if (!src) RETURN_FALSE;
+
+    php_stream *dst = php_stream_open_wrapper(ZSTR_VAL(destination), "wb", REPORT_ERRORS, NULL);
+    if (!dst) {
+        php_stream_close(src);
+        RETURN_FALSE;
+    }
+
+    php_stream_copy_to_stream_ex(src, dst, PHP_STREAM_COPY_ALL, NULL);
+    php_stream_close(src);
+    php_stream_close(dst);
+    unlink(Z_STRVAL_P(tmp_prop));
+
+    RETURN_TRUE;
+}
+
 /* ============================================================================
  * Response Class Methods
  * ============================================================================ */
@@ -764,6 +972,32 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getbody, 0, 0, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getparsedbody, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getuploadedfiles, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+/* UploadedFile arginfo */
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_uploadedfile_getname, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_uploadedfile_gettype, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_uploadedfile_getsize, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_uploadedfile_gettmpname, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_uploadedfile_geterror, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_uploadedfile_moveto, 0, 1, _IS_BOOL, 0)
+    ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_setstatus, 0, 1, IS_VOID, 0)
     ZEND_ARG_TYPE_INFO(0, code, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -828,6 +1062,8 @@ static const zend_function_entry frankenphp_request_methods[] = {
     PHP_ME(FrankenPHP_Request, getQueryParams, arginfo_request_getqueryparams, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Request, getCookies, arginfo_request_getcookies, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Request, getBody, arginfo_request_getbody, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getParsedBody, arginfo_request_getparsedbody, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getUploadedFiles, arginfo_request_getuploadedfiles, ZEND_ACC_PUBLIC)
     PHP_FE_END
 };
 
@@ -843,6 +1079,16 @@ static const zend_function_entry frankenphp_response_methods[] = {
     PHP_ME(FrankenPHP_Response, isHeadersSent, arginfo_response_isheaderssent, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Response, write, arginfo_response_write, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Response, end, arginfo_response_end, ZEND_ACC_PUBLIC)
+    PHP_FE_END
+};
+
+static const zend_function_entry frankenphp_uploadedfile_methods[] = {
+    PHP_ME(FrankenPHP_UploadedFile, getName, arginfo_uploadedfile_getname, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_UploadedFile, getType, arginfo_uploadedfile_gettype, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_UploadedFile, getSize, arginfo_uploadedfile_getsize, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_UploadedFile, getTmpName, arginfo_uploadedfile_gettmpname, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_UploadedFile, getError, arginfo_uploadedfile_geterror, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_UploadedFile, moveTo, arginfo_uploadedfile_moveto, ZEND_ACC_PUBLIC)
     PHP_FE_END
 };
 
@@ -875,6 +1121,23 @@ int frankenphp_extension_init(void)
     memcpy(&frankenphp_response_object_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     frankenphp_response_object_handlers.offset = XtOffsetOf(frankenphp_response_object, std);
     frankenphp_response_object_handlers.free_obj = frankenphp_response_free_object;
+
+    /* Register FrankenPHP\UploadedFile class */
+    INIT_CLASS_ENTRY(ce, "FrankenPHP\\UploadedFile", frankenphp_uploadedfile_methods);
+    frankenphp_uploadedfile_ce = zend_register_internal_class(&ce);
+
+    /* Declare properties */
+    zval default_str, default_long;
+    ZVAL_STRING(&default_str, "");
+    ZVAL_LONG(&default_long, 0);
+
+    zend_declare_property(frankenphp_uploadedfile_ce, "name", sizeof("name") - 1, &default_str, ZEND_ACC_PROTECTED);
+    zend_declare_property(frankenphp_uploadedfile_ce, "type", sizeof("type") - 1, &default_str, ZEND_ACC_PROTECTED);
+    zend_declare_property(frankenphp_uploadedfile_ce, "tmpName", sizeof("tmpName") - 1, &default_str, ZEND_ACC_PROTECTED);
+    zend_declare_property(frankenphp_uploadedfile_ce, "size", sizeof("size") - 1, &default_long, ZEND_ACC_PROTECTED);
+    zend_declare_property(frankenphp_uploadedfile_ce, "error", sizeof("error") - 1, &default_long, ZEND_ACC_PROTECTED);
+
+    zval_ptr_dtor(&default_str);
 
     return SUCCESS;
 }

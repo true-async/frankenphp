@@ -4,6 +4,7 @@ package frankenphp
 import "C"
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -496,6 +497,172 @@ func go_async_get_request_is_tls(threadIndex C.uintptr_t, requestID C.uint64_t) 
 		return C.bool(false)
 	}
 	return C.bool(ch.frankenPHPContext.request.TLS != nil)
+}
+
+// go_async_get_parsed_body returns form fields as "name\0value\0" pairs.
+// Handles both application/x-www-form-urlencoded and multipart/form-data.
+//
+//export go_async_get_parsed_body
+func go_async_get_parsed_body(threadIndex C.uintptr_t, requestID C.uint64_t, length *C.size_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		*length = 0
+		return nil
+	}
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		*length = 0
+		return nil
+	}
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		*length = 0
+		return nil
+	}
+
+	r := ch.frankenPHPContext.request
+	ct := r.Header.Get("Content-Type")
+
+	if strings.HasPrefix(ct, "multipart/form-data") {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			*length = 0
+			return nil
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			*length = 0
+			return nil
+		}
+	}
+
+	var buf []byte
+	if r.PostForm != nil {
+		for name, values := range r.PostForm {
+			for _, v := range values {
+				buf = append(buf, name...)
+				buf = append(buf, 0)
+				buf = append(buf, v...)
+				buf = append(buf, 0)
+			}
+		}
+	}
+
+	if len(buf) == 0 {
+		*length = 0
+		return nil
+	}
+
+	*length = C.size_t(len(buf))
+	return (*C.char)(C.CBytes(buf))
+}
+
+// uploadedFileInfo represents metadata for a single uploaded file.
+type uploadedFileInfo struct {
+	FieldName string `json:"field_name"`
+	FileName  string `json:"file_name"`
+	Size      int64  `json:"size"`
+	MimeType  string `json:"mime_type"`
+	TmpName   string `json:"tmp_name"`
+	Error     int    `json:"error"`
+}
+
+// go_async_get_uploaded_files parses multipart uploads, saves files to temp dir,
+// returns JSON array of file metadata.
+//
+//export go_async_get_uploaded_files
+func go_async_get_uploaded_files(threadIndex C.uintptr_t, requestID C.uint64_t, length *C.size_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		*length = 0
+		return nil
+	}
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		*length = 0
+		return nil
+	}
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		*length = 0
+		return nil
+	}
+
+	r := ch.frankenPHPContext.request
+	ct := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
+		*length = 0
+		return nil
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		*length = 0
+		return nil
+	}
+
+	if r.MultipartForm == nil || len(r.MultipartForm.File) == 0 {
+		*length = 0
+		return nil
+	}
+
+	var files []uploadedFileInfo
+	for fieldName, fileHeaders := range r.MultipartForm.File {
+		for _, fh := range fileHeaders {
+			info := uploadedFileInfo{
+				FieldName: fieldName,
+				FileName:  fh.Filename,
+				Size:      fh.Size,
+				MimeType:  fh.Header.Get("Content-Type"),
+				Error:     0, // UPLOAD_ERR_OK
+			}
+
+			// Save to temp file
+			src, err := fh.Open()
+			if err != nil {
+				info.Error = 6 // UPLOAD_ERR_NO_TMP_DIR
+				files = append(files, info)
+				continue
+			}
+
+			tmpFile, err := os.CreateTemp("", "frankenphp_upload_*")
+			if err != nil {
+				src.Close()
+				info.Error = 6
+				files = append(files, info)
+				continue
+			}
+
+			written, err := io.Copy(tmpFile, src)
+			src.Close()
+			tmpFile.Close()
+
+			if err != nil {
+				os.Remove(tmpFile.Name())
+				info.Error = 3 // UPLOAD_ERR_PARTIAL
+				files = append(files, info)
+				continue
+			}
+
+			info.TmpName = tmpFile.Name()
+			info.Size = written
+			files = append(files, info)
+		}
+	}
+
+	if len(files) == 0 {
+		*length = 0
+		return nil
+	}
+
+	jsonData, err := json.Marshal(files)
+	if err != nil {
+		*length = 0
+		return nil
+	}
+
+	*length = C.size_t(len(jsonData))
+	return (*C.char)(C.CBytes(jsonData))
 }
 
 // go_async_get_all_request_headers returns all request headers serialized as "name\0value\0" pairs.
