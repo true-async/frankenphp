@@ -25,6 +25,10 @@ extern char *go_async_get_request_uri(uintptr_t thread_index, uint64_t request_i
 extern char *go_async_get_request_header(uintptr_t thread_index, uint64_t request_id, const char *header_name);
 extern char *go_async_get_request_body(uintptr_t thread_index, uint64_t request_id, size_t *length);
 extern char *go_async_get_all_request_headers(uintptr_t thread_index, uint64_t request_id, size_t *length);
+extern char *go_async_get_request_host(uintptr_t thread_index, uint64_t request_id);
+extern char *go_async_get_request_remote_addr(uintptr_t thread_index, uint64_t request_id);
+extern char *go_async_get_request_proto(uintptr_t thread_index, uint64_t request_id);
+extern bool go_async_get_request_is_tls(uintptr_t thread_index, uint64_t request_id);
 extern void go_async_notify_request_done(uintptr_t thread_index, uint64_t request_id);
 extern void go_async_response_write(uintptr_t thread_index, uint64_t request_id, void *data, size_t length);
 extern void go_async_response_complete(uintptr_t thread_index, uint64_t request_id, int status_code, void *headers_data, size_t headers_len, void *body_data, size_t body_len);
@@ -277,6 +281,152 @@ PHP_METHOD(FrankenPHP_Request, getHeaders)
     free(data);
 }
 
+/* Request::getHost(): string */
+PHP_METHOD(FrankenPHP_Request, getHost)
+{
+    frankenphp_request_object *intern;
+    char *host;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    host = go_async_get_request_host(thread_index, intern->request_id);
+    if (host == NULL) {
+        RETURN_STRING("");
+    }
+    RETVAL_STRING(host);
+    free(host);
+}
+
+/* Request::getRemoteAddr(): string */
+PHP_METHOD(FrankenPHP_Request, getRemoteAddr)
+{
+    frankenphp_request_object *intern;
+    char *addr;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    addr = go_async_get_request_remote_addr(thread_index, intern->request_id);
+    if (addr == NULL) {
+        RETURN_STRING("");
+    }
+    RETVAL_STRING(addr);
+    free(addr);
+}
+
+/* Request::getProtocolVersion(): string */
+PHP_METHOD(FrankenPHP_Request, getProtocolVersion)
+{
+    frankenphp_request_object *intern;
+    char *proto;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    proto = go_async_get_request_proto(thread_index, intern->request_id);
+    if (proto == NULL) {
+        RETURN_STRING("HTTP/1.1");
+    }
+    RETVAL_STRING(proto);
+    free(proto);
+}
+
+/* Request::getScheme(): string */
+PHP_METHOD(FrankenPHP_Request, getScheme)
+{
+    frankenphp_request_object *intern;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+    bool is_tls = go_async_get_request_is_tls(thread_index, intern->request_id);
+    RETURN_STRING(is_tls ? "https" : "http");
+}
+
+/* Request::getQueryParams(): array */
+PHP_METHOD(FrankenPHP_Request, getQueryParams)
+{
+    frankenphp_request_object *intern;
+    char *uri;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+
+    array_init(return_value);
+
+    uri = go_async_get_request_uri(thread_index, intern->request_id);
+    if (uri == NULL) {
+        return;
+    }
+
+    /* Find query string after '?' */
+    char *query = strchr(uri, '?');
+    if (query == NULL || *(query + 1) == '\0') {
+        free(uri);
+        return;
+    }
+    query++; /* skip '?' */
+
+    /* Parse query string: key=value&key2=value2 */
+    char *pair, *saveptr;
+    char *query_copy = estrdup(query);
+    free(uri);
+
+    pair = strtok_r(query_copy, "&", &saveptr);
+    while (pair != NULL) {
+        char *eq = strchr(pair, '=');
+        if (eq) {
+            *eq = '\0';
+            add_assoc_string(return_value, pair, eq + 1);
+        } else {
+            add_assoc_string(return_value, pair, "");
+        }
+        pair = strtok_r(NULL, "&", &saveptr);
+    }
+
+    efree(query_copy);
+}
+
+/* Request::getCookies(): array */
+PHP_METHOD(FrankenPHP_Request, getCookies)
+{
+    frankenphp_request_object *intern;
+    char *cookie_header;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_request_from_obj(Z_OBJ_P(ZEND_THIS));
+
+    array_init(return_value);
+
+    cookie_header = go_async_get_request_header(thread_index, intern->request_id, "Cookie");
+    if (cookie_header == NULL) {
+        return;
+    }
+
+    /* Parse Cookie header: name=value; name2=value2 */
+    char *pair, *saveptr;
+    char *copy = estrdup(cookie_header);
+    free(cookie_header);
+
+    pair = strtok_r(copy, ";", &saveptr);
+    while (pair != NULL) {
+        /* Skip leading whitespace */
+        while (*pair == ' ') pair++;
+
+        char *eq = strchr(pair, '=');
+        if (eq) {
+            *eq = '\0';
+            add_assoc_string(return_value, pair, eq + 1);
+        }
+        pair = strtok_r(NULL, ";", &saveptr);
+    }
+
+    efree(copy);
+}
+
 /* Request::getBody(): string */
 PHP_METHOD(FrankenPHP_Request, getBody)
 {
@@ -368,6 +518,111 @@ PHP_METHOD(FrankenPHP_Response, addHeader)
 
     intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
     frankenphp_response_add_header(intern, name, value, false);
+}
+
+/* Response::removeHeader(string $name): void */
+PHP_METHOD(FrankenPHP_Response, removeHeader)
+{
+    frankenphp_response_object *intern;
+    zend_string *name;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STR(name)
+    ZEND_PARSE_PARAMETERS_END();
+
+    intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+    zend_hash_del(&intern->headers, name);
+}
+
+/* Response::getStatus(): int */
+PHP_METHOD(FrankenPHP_Response, getStatus)
+{
+    frankenphp_response_object *intern;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+    RETURN_LONG(intern->status_code);
+}
+
+/* Response::getHeader(string $name): ?string */
+PHP_METHOD(FrankenPHP_Response, getHeader)
+{
+    frankenphp_response_object *intern;
+    zend_string *name;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STR(name)
+    ZEND_PARSE_PARAMETERS_END();
+
+    intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+
+    zval *arr = zend_hash_find(&intern->headers, name);
+    if (!arr || Z_TYPE_P(arr) != IS_ARRAY) {
+        RETURN_NULL();
+    }
+
+    /* Return first value */
+    zval *first = zend_hash_index_find(Z_ARRVAL_P(arr), 0);
+    if (!first || Z_TYPE_P(first) != IS_STRING) {
+        RETURN_NULL();
+    }
+
+    RETURN_STR_COPY(Z_STR_P(first));
+}
+
+/* Response::getHeaders(): array */
+PHP_METHOD(FrankenPHP_Response, getHeaders)
+{
+    frankenphp_response_object *intern;
+    zend_string *name;
+    zval *arr;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+
+    array_init(return_value);
+
+    ZEND_HASH_FOREACH_STR_KEY_VAL(&intern->headers, name, arr) {
+        if (!name || Z_TYPE_P(arr) != IS_ARRAY) continue;
+
+        zval copy;
+        ZVAL_ARR(&copy, zend_array_dup(Z_ARRVAL_P(arr)));
+        zend_hash_add(Z_ARRVAL_P(return_value), name, &copy);
+    } ZEND_HASH_FOREACH_END();
+}
+
+/* Response::redirect(string $url, int $code = 302): void */
+PHP_METHOD(FrankenPHP_Response, redirect)
+{
+    frankenphp_response_object *intern;
+    zend_string *url;
+    zend_long code = 302;
+
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_STR(url)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(code)
+    ZEND_PARSE_PARAMETERS_END();
+
+    intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+    intern->status_code = (int)code;
+
+    zend_string *location = zend_string_init("Location", sizeof("Location") - 1, 0);
+    frankenphp_response_add_header(intern, location, url, true);
+    zend_string_release(location);
+}
+
+/* Response::isHeadersSent(): bool */
+PHP_METHOD(FrankenPHP_Response, isHeadersSent)
+{
+    frankenphp_response_object *intern;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    intern = frankenphp_response_from_obj(Z_OBJ_P(ZEND_THIS));
+    RETURN_BOOL(intern->headers_sent);
 }
 
 /* Response::write(string $data): void */
@@ -473,6 +728,24 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getheaders, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_gethost, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getremoteaddr, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getprotocolversion, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getscheme, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getqueryparams, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getcookies, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_request_getbody, 0, 0, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
@@ -488,6 +761,28 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_addheader, 0, 2, IS_VOID, 0)
     ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, value, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_removeheader, 0, 1, IS_VOID, 0)
+    ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_getstatus, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_getheader, 0, 1, IS_STRING, 1)
+    ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_getheaders, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_redirect, 0, 1, IS_VOID, 0)
+    ZEND_ARG_TYPE_INFO(0, url, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, code, IS_LONG, 0, "302")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_isheaderssent, 0, 0, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_response_write, 0, 1, IS_VOID, 0)
@@ -511,6 +806,12 @@ static const zend_function_entry frankenphp_request_methods[] = {
     PHP_ME(FrankenPHP_Request, getUri, arginfo_request_geturi, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Request, getHeader, arginfo_request_getheader, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Request, getHeaders, arginfo_request_getheaders, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getHost, arginfo_request_gethost, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getRemoteAddr, arginfo_request_getremoteaddr, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getProtocolVersion, arginfo_request_getprotocolversion, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getScheme, arginfo_request_getscheme, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getQueryParams, arginfo_request_getqueryparams, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Request, getCookies, arginfo_request_getcookies, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Request, getBody, arginfo_request_getbody, ZEND_ACC_PUBLIC)
     PHP_FE_END
 };
@@ -519,6 +820,12 @@ static const zend_function_entry frankenphp_response_methods[] = {
     PHP_ME(FrankenPHP_Response, setStatus, arginfo_response_setstatus, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Response, setHeader, arginfo_response_setheader, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Response, addHeader, arginfo_response_addheader, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Response, removeHeader, arginfo_response_removeheader, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Response, getStatus, arginfo_response_getstatus, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Response, getHeader, arginfo_response_getheader, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Response, getHeaders, arginfo_response_getheaders, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Response, redirect, arginfo_response_redirect, ZEND_ACC_PUBLIC)
+    PHP_ME(FrankenPHP_Response, isHeadersSent, arginfo_response_isheaderssent, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Response, write, arginfo_response_write, ZEND_ACC_PUBLIC)
     PHP_ME(FrankenPHP_Response, end, arginfo_response_end, ZEND_ACC_PUBLIC)
     PHP_FE_END

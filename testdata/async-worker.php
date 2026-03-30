@@ -20,6 +20,11 @@ HttpServer::onRequest(function (Request $request, Response $response) {
         '/test/request-headers' => handleRequestHeaders($request, $response),
         '/test/request-method' => handleRequestMethod($request, $response),
         '/test/request-body' => handleRequestBody($request, $response),
+        '/test/query-params' => handleQueryParams($request, $response),
+        '/test/request-cookies' => handleRequestCookies($request, $response),
+        '/test/request-info' => handleRequestInfo($request, $response),
+        '/test/response-getters' => handleResponseGetters($request, $response),
+        '/test/redirect' => handleRedirect($request, $response),
         '/test/echo' => handleEcho($request, $response),
         default => handleNotFound($request, $response),
     };
@@ -106,6 +111,57 @@ function handleEcho(Request $request, Response $response): void {
     $response->setStatus(200);
     $response->setHeader('Content-Type', 'application/json');
     $response->write(json_encode($result));
+    $response->end();
+}
+
+function handleQueryParams(Request $request, Response $response): void {
+    $response->setStatus(200);
+    $response->setHeader('Content-Type', 'application/json');
+    $response->write(json_encode($request->getQueryParams()));
+    $response->end();
+}
+
+function handleRequestCookies(Request $request, Response $response): void {
+    $response->setStatus(200);
+    $response->setHeader('Content-Type', 'application/json');
+    $response->write(json_encode($request->getCookies()));
+    $response->end();
+}
+
+function handleRequestInfo(Request $request, Response $response): void {
+    $result = [
+        'host' => $request->getHost(),
+        'remote_addr' => $request->getRemoteAddr(),
+        'protocol' => $request->getProtocolVersion(),
+        'scheme' => $request->getScheme(),
+    ];
+    $response->setStatus(200);
+    $response->setHeader('Content-Type', 'application/json');
+    $response->write(json_encode($result));
+    $response->end();
+}
+
+function handleResponseGetters(Request $request, Response $response): void {
+    $response->setStatus(201);
+    $response->setHeader('X-Test', 'hello');
+    $response->addHeader('X-Multi', 'a');
+    $response->addHeader('X-Multi', 'b');
+
+    $result = [
+        'status' => $response->getStatus(),
+        'header' => $response->getHeader('X-Test'),
+        'missing_header' => $response->getHeader('X-Nope'),
+        'headers_sent' => $response->isHeadersSent(),
+        'headers' => $response->getHeaders(),
+    ];
+
+    $response->setHeader('Content-Type', 'application/json');
+    $response->write(json_encode($result));
+    $response->end();
+}
+
+function handleRedirect(Request $request, Response $response): void {
+    $response->redirect('https://example.com/target', 301);
     $response->end();
 }
 

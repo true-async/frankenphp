@@ -410,6 +410,94 @@ func go_async_get_request_uri(threadIndex C.uintptr_t, requestID C.uint64_t) *C.
 	return C.CString(ch.frankenPHPContext.request.RequestURI)
 }
 
+// go_async_get_request_host returns the Host header value.
+//
+//export go_async_get_request_host
+func go_async_get_request_host(threadIndex C.uintptr_t, requestID C.uint64_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return nil
+	}
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		return nil
+	}
+	host := ch.frankenPHPContext.request.Host
+	if host == "" {
+		return nil
+	}
+	return C.CString(host)
+}
+
+// go_async_get_request_remote_addr returns the client remote address (IP:port).
+//
+//export go_async_get_request_remote_addr
+func go_async_get_request_remote_addr(threadIndex C.uintptr_t, requestID C.uint64_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return nil
+	}
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		return nil
+	}
+	addr := ch.frankenPHPContext.request.RemoteAddr
+	if addr == "" {
+		return nil
+	}
+	return C.CString(addr)
+}
+
+// go_async_get_request_proto returns the HTTP protocol version (e.g. "HTTP/1.1").
+//
+//export go_async_get_request_proto
+func go_async_get_request_proto(threadIndex C.uintptr_t, requestID C.uint64_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return nil
+	}
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return nil
+	}
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		return nil
+	}
+	return C.CString(ch.frankenPHPContext.request.Proto)
+}
+
+// go_async_get_request_is_tls returns whether the request uses TLS.
+//
+//export go_async_get_request_is_tls
+func go_async_get_request_is_tls(threadIndex C.uintptr_t, requestID C.uint64_t) C.bool {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		return C.bool(false)
+	}
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		return C.bool(false)
+	}
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		return C.bool(false)
+	}
+	return C.bool(ch.frankenPHPContext.request.TLS != nil)
+}
+
 // go_async_get_all_request_headers returns all request headers serialized as "name\0value\0" pairs.
 // Returns a malloc'd buffer that must be freed by the caller.
 //

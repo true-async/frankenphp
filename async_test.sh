@@ -122,6 +122,29 @@ assert_json_field "getHeader returns NULL for missing" "$BASE/test/request-heade
 echo "[Request: getBody]"
 assert_body "POST body echo" "$BASE/test/request-body" "hello world" "POST" "hello world"
 
+echo "[Request: getQueryParams]"
+assert_json_field "query param foo" "$BASE/test/query-params?foo=bar&baz=123" "['foo']" "bar"
+assert_json_field "query param baz" "$BASE/test/query-params?foo=bar&baz=123" "['baz']" "123"
+
+echo "[Request: getCookies]"
+assert_json_field "cookie session" "$BASE/test/request-cookies" "['session']" "abc" "-H 'Cookie: session=abc; theme=dark'"
+assert_json_field "cookie theme" "$BASE/test/request-cookies" "['theme']" "dark" "-H 'Cookie: session=abc; theme=dark'"
+
+echo "[Request: getHost/getRemoteAddr/getScheme/getProtocolVersion]"
+assert_json_field "host" "$BASE/test/request-info" "['host']" "localhost:8085"
+assert_json_field "scheme is http" "$BASE/test/request-info" "['scheme']" "http"
+assert_json_field "protocol" "$BASE/test/request-info" "['protocol']" "HTTP/1.1"
+
+echo "[Response: getters]"
+assert_json_field "getStatus returns 201" "$BASE/test/response-getters" "['status']" "201"
+assert_json_field "getHeader returns value" "$BASE/test/response-getters" "['header']" "hello"
+assert_json_field "getHeader returns NULL for missing" "$BASE/test/response-getters" "['missing_header']" "NULL"
+assert_json_field "isHeadersSent false before end" "$BASE/test/response-getters" "['headers_sent']" ""
+
+echo "[Response: redirect]"
+assert_status "301 redirect" "$BASE/test/redirect" "301"
+assert_header "Location header" "$BASE/test/redirect" "Location" "https://example.com/target"
+
 echo "[Request: echo]"
 assert_json_field "echo method" "$BASE/test/echo" "['method']" "POST" "-X POST -d test"
 assert_json_field "echo body" "$BASE/test/echo" "['body']" "test" "-X POST -d test"
