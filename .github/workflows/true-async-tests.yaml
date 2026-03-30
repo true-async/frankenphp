@@ -112,7 +112,8 @@ jobs:
             libcurl4-openssl-dev libedit-dev libreadline-dev libncurses-dev \
             libsodium-dev libsqlite3-dev libonig-dev libzip-dev \
             libgmp-dev libpq-dev libbz2-dev \
-            libffi-dev libxslt1-dev libicu-dev
+            libffi-dev libxslt1-dev libicu-dev \
+            libbrotli-dev
 
       - name: Verify PHP
         run: |
