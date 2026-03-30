@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -409,6 +410,50 @@ func go_async_get_request_uri(threadIndex C.uintptr_t, requestID C.uint64_t) *C.
 	return C.CString(ch.frankenPHPContext.request.RequestURI)
 }
 
+// go_async_get_all_request_headers returns all request headers serialized as "name\0value\0" pairs.
+// Returns a malloc'd buffer that must be freed by the caller.
+//
+//export go_async_get_all_request_headers
+func go_async_get_all_request_headers(threadIndex C.uintptr_t, requestID C.uint64_t, length *C.size_t) *C.char {
+	thread := phpThreads[threadIndex]
+	handler, ok := thread.handler.(*asyncWorkerThread)
+	if !ok {
+		*length = 0
+		return nil
+	}
+
+	val, ok := handler.requestMap.Load(uint64(requestID))
+	if !ok {
+		*length = 0
+		return nil
+	}
+
+	ch := val.(contextHolder)
+	if ch.frankenPHPContext == nil || ch.frankenPHPContext.request == nil {
+		*length = 0
+		return nil
+	}
+
+	var buf []byte
+	for name, values := range ch.frankenPHPContext.request.Header {
+		for _, v := range values {
+			buf = append(buf, name...)
+			buf = append(buf, 0)
+			buf = append(buf, v...)
+			buf = append(buf, 0)
+		}
+	}
+
+	if len(buf) == 0 {
+		*length = 0
+		return nil
+	}
+
+	*length = C.size_t(len(buf))
+	cBuf := C.CBytes(buf)
+	return (*C.char)(cBuf)
+}
+
 // go_async_get_request_header returns a specific request header value.
 //
 //export go_async_get_request_header
@@ -499,9 +544,7 @@ func (t *phpThread) responseDispatcher() {
 }
 
 // handleWrite executes the blocking HTTP write in an isolated goroutine.
-// The data pointer references a PHP zend_string buffer whose lifetime is managed
-// by the C-side pending writes system. Calls back to C via frankenphp_async_write_done
-// when the write completes so the zend_string reference can be released.
+// For complete responses (statusCode > 0), it sets headers and status before writing body.
 func (t *phpThread) handleWrite(write responseWrite) {
 	handler, ok := t.handler.(*asyncWorkerThread)
 	if !ok {
@@ -518,9 +561,75 @@ func (t *phpThread) handleWrite(write responseWrite) {
 		return
 	}
 
-	ch.frankenPHPContext.responseWriter.Write(write.data)
+	rw := ch.frankenPHPContext.responseWriter
+
+	if write.statusCode > 0 {
+		parseSerializedHeaders(rw, write.headers)
+		rw.WriteHeader(write.statusCode)
+	}
+
+	if len(write.data) > 0 {
+		rw.Write(write.data)
+	}
 
 	go_async_worker_request_done(C.uintptr_t(t.threadIndex), C.uint64_t(write.requestID))
+}
+
+// parseSerializedHeaders parses null-separated "name\0value\0" pairs and sets them on the ResponseWriter.
+func parseSerializedHeaders(rw http.ResponseWriter, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
+	h := rw.Header()
+	i := 0
+	for i < len(data) {
+		nameEnd := i
+		for nameEnd < len(data) && data[nameEnd] != 0 {
+			nameEnd++
+		}
+		if nameEnd >= len(data) {
+			break
+		}
+		name := string(data[i:nameEnd])
+
+		valueStart := nameEnd + 1
+		valueEnd := valueStart
+		for valueEnd < len(data) && data[valueEnd] != 0 {
+			valueEnd++
+		}
+		value := string(data[valueStart:valueEnd])
+
+		h.Add(name, value)
+		i = valueEnd + 1
+	}
+}
+
+// go_async_response_complete queues a full response (status + headers + body) for asynchronous writing.
+// Headers are serialized as null-separated "name\0value\0" pairs.
+//
+//export go_async_response_complete
+func go_async_response_complete(threadIndex C.uintptr_t, requestID C.uint64_t, statusCode C.int, headersData unsafe.Pointer, headersLen C.size_t, bodyData unsafe.Pointer, bodyLen C.size_t) {
+	thread := phpThreads[threadIndex]
+
+	var bodyCopy []byte
+	if int(bodyLen) > 0 {
+		bodyCopy = make([]byte, int(bodyLen))
+		copy(bodyCopy, unsafe.Slice((*byte)(bodyData), int(bodyLen)))
+	}
+
+	var headersCopy []byte
+	if int(headersLen) > 0 {
+		headersCopy = make([]byte, int(headersLen))
+		copy(headersCopy, unsafe.Slice((*byte)(headersData), int(headersLen)))
+	}
+
+	thread.responseChan <- responseWrite{
+		requestID:  uint64(requestID),
+		statusCode: int(statusCode),
+		headers:    headersCopy,
+		data:       bodyCopy,
+	}
 }
 
 // go_async_response_write queues response data for asynchronous writing.

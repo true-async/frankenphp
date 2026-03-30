@@ -1,0 +1,159 @@
+---
+name: TrueAsync Tests
+concurrency:
+  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+on:
+  pull_request:
+    branches:
+      - true-async
+  push:
+    branches:
+      - true-async
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test (TrueAsync)
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # ── PHP 8.6-dev with TrueAsync (cached) ──────────────────────
+      - name: Cache PHP build
+        id: php-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/php-install
+          key: php-trueasync-v1
+
+      - name: Install build dependencies
+        if: steps.php-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            autoconf bison build-essential curl re2c git \
+            cmake ninja-build wget dos2unix pkg-config \
+            libxml2-dev libssl-dev libargon2-dev \
+            libcurl4-openssl-dev libedit-dev libreadline-dev \
+            libsodium-dev libsqlite3-dev libonig-dev libzip-dev \
+            libpng-dev libjpeg-dev libwebp-dev libfreetype6-dev \
+            libgmp-dev libpq-dev libbz2-dev libncurses-dev \
+            libffi-dev libxslt1-dev libicu-dev libpsl-dev
+
+      - name: Build libuv 1.49
+        if: steps.php-cache.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://github.com/libuv/libuv/archive/v1.49.0.tar.gz
+          tar -xf v1.49.0.tar.gz
+          cd libuv-1.49.0
+          mkdir build && cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          ninja
+          DESTDIR=$HOME/php-install ninja install
+
+      - name: Build PHP 8.6-dev with TrueAsync
+        if: steps.php-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch true-async-stable \
+            https://github.com/true-async/php-src.git /tmp/php-src
+          git clone --depth 1 --branch main \
+            https://github.com/true-async/php-async.git /tmp/php-src/ext/async
+          dos2unix /tmp/php-src/ext/async/config.m4
+          cd /tmp/php-src
+          ./buildconf --force
+          ./configure \
+            --prefix=$HOME/php-install/usr/local \
+            --disable-debug \
+            --enable-zts \
+            --enable-async \
+            --enable-embed \
+            --enable-mbstring \
+            --enable-sockets \
+            --enable-bcmath \
+            --enable-pdo \
+            --with-curl \
+            --with-openssl \
+            --with-zlib \
+            --with-sodium \
+            --with-readline \
+            --without-pear
+          make -j"$(nproc)"
+          make install
+
+      - name: Install PHP to system
+        run: |
+          sudo cp -a ~/php-install/usr/local/* /usr/local/
+          sudo ldconfig
+
+      - name: Install runtime libraries
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libxml2-dev libssl-dev libargon2-dev \
+            libcurl4-openssl-dev libedit-dev libreadline-dev libncurses-dev \
+            libsodium-dev libsqlite3-dev libonig-dev libzip-dev \
+            libgmp-dev libpq-dev libbz2-dev \
+            libffi-dev libxslt1-dev libicu-dev
+
+      - name: Verify PHP
+        run: |
+          php -v
+          php -m | grep async
+
+      # ── Go setup ─────────────────────────────────────────────────
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: |
+            go.sum
+            caddy/go.sum
+
+      # ── Build FrankenPHP ─────────────────────────────────────────
+      - name: Set CGO flags
+        run: |
+          echo "CGO_CFLAGS=$(php-config --includes)" >> "${GITHUB_ENV}"
+          echo "CGO_LDFLAGS=$(php-config --ldflags) $(php-config --libs)" >> "${GITHUB_ENV}"
+
+      - name: Build FrankenPHP binary
+        working-directory: caddy/frankenphp/
+        run: go build -tags "trueasync,nowatcher"
+
+      # ── Run async integration tests ──────────────────────────────
+      - name: Create test Caddyfile
+        run: |
+          cat > /tmp/Caddyfile.async-test <<EOF
+          {
+            frankenphp
+          }
+          :8085 {
+            root * .
+            php_server {
+              index off
+              file_server off
+              worker {
+                file ${{ github.workspace }}/testdata/async-worker.php
+                num 1
+                async
+                match /*
+              }
+            }
+          }
+          EOF
+
+      - name: Start FrankenPHP
+        run: |
+          ./caddy/frankenphp/frankenphp start --config /tmp/Caddyfile.async-test
+          sleep 3
+
+      - name: Run async integration tests
+        run: ./async_test.sh http://localhost:8085
+
+      - name: Stop FrankenPHP
+        if: always()
+        run: ./caddy/frankenphp/frankenphp stop 2>/dev/null || killall frankenphp 2>/dev/null || true

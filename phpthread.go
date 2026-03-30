@@ -15,8 +15,10 @@ import (
 
 // responseWrite represents queued response data for async writing
 type responseWrite struct {
-	requestID uint64
-	data      []byte // Owned copy of response data
+	requestID  uint64
+	statusCode int    // 0 means legacy (body-only write), >0 means complete response
+	headers    []byte // Serialized headers: "name\0value\0name\0value\0"
+	data       []byte // Owned copy of response body
 }
 
 // representation of the actual underlying PHP thread
