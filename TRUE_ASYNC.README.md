@@ -113,9 +113,68 @@ HttpServer::onRequest(function (Request $request, Response $response) {
 });
 ```
 
-API surface:
-- `Request::getMethod()`, `getUri()`, `getHeaders()`, `getBody()` (body is fully read once).
-- `Response::setStatus()`, `setHeader()`, `write()`, `end()` (call `end()` to flush and release the pending write reference; multiple `write()` calls are buffered).
+## Request API
+
+All data is fetched from Go's `http.Request` via CGO — no SAPI globals, safe for concurrent coroutines.
+
+| Method | Return | Description |
+|--------|--------|-------------|
+| `getMethod()` | `string` | HTTP method (`GET`, `POST`, etc.) |
+| `getUri()` | `string` | Full request URI with query string |
+| `getHeader(string $name)` | `?string` | Single header value, or `null` |
+| `getHeaders()` | `array` | All headers as `name => value` (multi-values joined with `, `) |
+| `getBody()` | `string` | Full request body (read once) |
+| `getQueryParams()` | `array` | Parsed + URL-decoded query string |
+| `getCookies()` | `array` | Parsed + URL-decoded cookies from `Cookie` header |
+| `getHost()` | `string` | Host header value |
+| `getRemoteAddr()` | `string` | Client address (`ip:port`) |
+| `getScheme()` | `string` | `http` or `https` |
+| `getProtocolVersion()` | `string` | Protocol (`HTTP/1.1`, `HTTP/2.0`) |
+
+## Response API
+
+Headers and status are stored per-object (not in SAPI globals), serialized and sent to Go in a single CGO call at `end()`.
+
+| Method | Return | Description |
+|--------|--------|-------------|
+| `setStatus(int $code)` | `void` | Set HTTP status code (default 200) |
+| `getStatus()` | `int` | Read current status code |
+| `setHeader(string $name, string $value)` | `void` | Set header (replaces existing) |
+| `addHeader(string $name, string $value)` | `void` | Append header (for `Set-Cookie`, etc.) |
+| `removeHeader(string $name)` | `void` | Remove a header |
+| `getHeader(string $name)` | `?string` | Read first value of a header, or `null` |
+| `getHeaders()` | `array` | All headers as `name => [values...]` |
+| `isHeadersSent()` | `bool` | Whether `end()` has been called |
+| `redirect(string $url, int $code = 302)` | `void` | Set Location header + status |
+| `write(string $data)` | `void` | Buffer response body (multiple calls OK) |
+| `end()` | `void` | Send status + headers + body to client. **Must be called.** |
+
+### Example: cookies and redirect
+
+```php
+HttpServer::onRequest(function (Request $request, Response $response) {
+    // Read cookies from request
+    $cookies = $request->getCookies();
+
+    if (!isset($cookies['session'])) {
+        // Set multiple cookies
+        $response->addHeader('Set-Cookie', 'session=abc123; Path=/; HttpOnly');
+        $response->addHeader('Set-Cookie', 'theme=dark; Path=/');
+        $response->redirect('/welcome');
+        $response->end();
+        return;
+    }
+
+    // Query params
+    $params = $request->getQueryParams();
+    $name = $params['name'] ?? 'World';
+
+    $response->setStatus(200);
+    $response->setHeader('Content-Type', 'text/plain');
+    $response->write("Hello, {$name}!");
+    $response->end();
+});
+```
 
 ## Worker restart (green-blue)
 
@@ -157,9 +216,9 @@ frankenphp.WithWorkerDrainTimeout(15 * time.Second)
 
 ## Execution model notes
 
-- By default each async thread uses an unbuffered channel (synchronous handoff). Set `buffer_size` to add a per-thread request queue (0..1000). If all threads are busy (or all buffers are full) you get `ErrAllBuffersFull` -> 503.
+- Each async thread uses a buffered channel with 1 slot (default). Set `buffer_size` to increase the per-thread request queue (max 10). If all threads are busy and all buffers are full, the client gets `503 (ErrAllBuffersFull)`.
 - Requests wake the PHP scheduler via a notifier (eventfd on Linux, pipe elsewhere) plus a heartbeat fast path to reduce wakeup latency.
-- `Response::write()` hands the PHP buffer to Go without copies; the Go side streams it and then calls back to free the pending write. Always call `end()` even for empty bodies.
+- `Response::write()` buffers data in the PHP object. `end()` serializes headers + body and copies them to Go in one CGO call. Always call `end()` even for empty bodies.
 - Shutdown sends a sentinel through the queue; the PHP loop frees pending writes and restores the heartbeat handler.
 
 ## Debugging with Delve

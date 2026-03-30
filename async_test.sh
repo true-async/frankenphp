@@ -125,10 +125,13 @@ assert_body "POST body echo" "$BASE/test/request-body" "hello world" "POST" "hel
 echo "[Request: getQueryParams]"
 assert_json_field "query param foo" "$BASE/test/query-params?foo=bar&baz=123" "['foo']" "bar"
 assert_json_field "query param baz" "$BASE/test/query-params?foo=bar&baz=123" "['baz']" "123"
+assert_json_field "query url-decode value" "$BASE/test/query-params?msg=hello+world&x=a%26b" "['msg']" "hello world"
+assert_json_field "query url-decode special" "$BASE/test/query-params?msg=hello+world&x=a%26b" "['x']" "a&b"
 
 echo "[Request: getCookies]"
 assert_json_field "cookie session" "$BASE/test/request-cookies" "['session']" "abc" "-H 'Cookie: session=abc; theme=dark'"
 assert_json_field "cookie theme" "$BASE/test/request-cookies" "['theme']" "dark" "-H 'Cookie: session=abc; theme=dark'"
+assert_json_field "cookie url-decode" "$BASE/test/request-cookies" "['name']" "hello world" "-H 'Cookie: name=hello%20world'"
 
 echo "[Request: getHost/getRemoteAddr/getScheme/getProtocolVersion]"
 assert_json_field "host" "$BASE/test/request-info" "['host']" "localhost:8085"

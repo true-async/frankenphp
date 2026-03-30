@@ -15,6 +15,7 @@
 #include "php_ini.h"
 #include "ext/standard/info.h"
 #include "zend_smart_str.h"
+#include "ext/standard/url.h"
 #include "SAPI.h"
 #include "frankenphp.h"
 #include <pthread.h>
@@ -344,6 +345,12 @@ PHP_METHOD(FrankenPHP_Request, getScheme)
     RETURN_STRING(is_tls ? "https" : "http");
 }
 
+/* Helper: URL-decode a string in-place, returns new length */
+static size_t frankenphp_url_decode(char *str, size_t len)
+{
+    return php_url_decode(str, len);
+}
+
 /* Request::getQueryParams(): array */
 PHP_METHOD(FrankenPHP_Request, getQueryParams)
 {
@@ -379,8 +386,13 @@ PHP_METHOD(FrankenPHP_Request, getQueryParams)
         char *eq = strchr(pair, '=');
         if (eq) {
             *eq = '\0';
-            add_assoc_string(return_value, pair, eq + 1);
+            char *key = pair;
+            char *val = eq + 1;
+            frankenphp_url_decode(key, strlen(key));
+            size_t val_len = frankenphp_url_decode(val, strlen(val));
+            add_assoc_stringl(return_value, key, val, val_len);
         } else {
+            frankenphp_url_decode(pair, strlen(pair));
             add_assoc_string(return_value, pair, "");
         }
         pair = strtok_r(NULL, "&", &saveptr);
@@ -419,7 +431,10 @@ PHP_METHOD(FrankenPHP_Request, getCookies)
         char *eq = strchr(pair, '=');
         if (eq) {
             *eq = '\0';
-            add_assoc_string(return_value, pair, eq + 1);
+            char *key = pair;
+            char *val = eq + 1;
+            size_t val_len = frankenphp_url_decode(val, strlen(val));
+            add_assoc_stringl(return_value, key, val, val_len);
         }
         pair = strtok_r(NULL, ";", &saveptr);
     }
