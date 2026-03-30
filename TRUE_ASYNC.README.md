@@ -130,6 +130,8 @@ All data is fetched from Go's `http.Request` via CGO — no SAPI globals, safe f
 | `getRemoteAddr()` | `string` | Client address (`ip:port`) |
 | `getScheme()` | `string` | `http` or `https` |
 | `getProtocolVersion()` | `string` | Protocol (`HTTP/1.1`, `HTTP/2.0`) |
+| `getParsedBody()` | `array` | Form fields (urlencoded + multipart) |
+| `getUploadedFiles()` | `array` | Uploaded files as `UploadedFile` objects |
 
 ## Response API
 
@@ -172,6 +174,48 @@ HttpServer::onRequest(function (Request $request, Response $response) {
     $response->setStatus(200);
     $response->setHeader('Content-Type', 'text/plain');
     $response->write("Hello, {$name}!");
+    $response->end();
+});
+```
+
+## UploadedFile API
+
+`getUploadedFiles()` returns `FrankenPHP\UploadedFile` objects. Go parses multipart via `http.Request.ParseMultipartForm`, saves files to a temp directory, and passes metadata to PHP.
+
+| Method | Return | Description |
+|--------|--------|-------------|
+| `getName()` | `string` | Original filename |
+| `getType()` | `string` | MIME type |
+| `getSize()` | `int` | File size in bytes |
+| `getTmpName()` | `string` | Temp file path |
+| `getError()` | `int` | Upload error code (`UPLOAD_ERR_OK` = 0) |
+| `moveTo(string $path)` | `bool` | Move file to destination (rename or copy+delete) |
+
+Multiple files for the same field are returned as an array of `UploadedFile` objects.
+
+### Example: file upload
+
+```php
+HttpServer::onRequest(function (Request $request, Response $response) {
+    $files = $request->getUploadedFiles();
+    $fields = $request->getParsedBody();
+
+    if (isset($files['avatar'])) {
+        $file = $files['avatar'];
+
+        if ($file->getError() === UPLOAD_ERR_OK) {
+            $file->moveTo('/uploads/' . $file->getName());
+            $response->setStatus(200);
+            $response->write("Uploaded: {$file->getName()} ({$file->getSize()} bytes)");
+        } else {
+            $response->setStatus(400);
+            $response->write("Upload error: {$file->getError()}");
+        }
+    } else {
+        $response->setStatus(400);
+        $response->write('No file uploaded');
+    }
+
     $response->end();
 });
 ```
