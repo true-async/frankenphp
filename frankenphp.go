@@ -766,7 +766,11 @@ func mapToAttr(input map[string]any) []slog.Attr {
 
 //export go_is_context_done
 func go_is_context_done(threadIndex C.uintptr_t) C.bool {
-	return C.bool(phpThreads[threadIndex].frankenPHPContext().isDone)
+	fc := phpThreads[threadIndex].frankenPHPContext()
+	if fc == nil {
+		return C.bool(false)
+	}
+	return C.bool(fc.isDone)
 }
 
 func convertArgs(args []string) (C.int, []*C.char) {
