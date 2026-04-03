@@ -26,12 +26,18 @@ jobs:
           persist-credentials: false
 
       # ── PHP 8.6-dev with TrueAsync (cached) ──────────────────────
+      - name: Get php-src commit SHA
+        id: php-sha
+        run: |
+          SHA=$(git ls-remote https://github.com/true-async/php-src.git true-async-stable | cut -f1 | head -c12)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
       - name: Cache PHP build
         id: php-cache
         uses: actions/cache@v4
         with:
           path: ~/php-install
-          key: php-trueasync-v2
+          key: php-trueasync-${{ steps.php-sha.outputs.sha }}
 
       - name: Install build dependencies
         if: steps.php-cache.outputs.cache-hit != 'true'
