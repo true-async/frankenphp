@@ -572,7 +572,7 @@ PHP_FUNCTION(frankenphp_handle_request) {
    * Reset default timeout
    */
   if (PG(max_input_time) != -1) {
-    zend_set_timeout(INI_INT("max_execution_time"), 0);
+    zend_set_timeout(zend_ini_long_literal("max_execution_time"), 0);
   }
 #endif
 
