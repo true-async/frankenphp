@@ -13,32 +13,10 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-// Fix for missing IntSafe functions (LongLongAdd) when building with Clang
-#ifdef __clang__
-#ifndef INTSAFE_E_ARITHMETIC_OVERFLOW
-#define INTSAFE_E_ARITHMETIC_OVERFLOW ((HRESULT)0x80070216L)
-#endif
-
-#ifndef LongLongAdd
-static inline HRESULT LongLongAdd(LONGLONG llAugend, LONGLONG llAddend,
-                                  LONGLONG *pllResult) {
-  if (__builtin_add_overflow(llAugend, llAddend, pllResult)) {
-    return INTSAFE_E_ARITHMETIC_OVERFLOW;
-  }
-  return S_OK;
-}
-#endif
-
-#ifndef LongLongSub
-static inline HRESULT LongLongSub(LONGLONG llMinuend, LONGLONG llSubtrahend,
-                                  LONGLONG *pllResult) {
-  if (__builtin_sub_overflow(llMinuend, llSubtrahend, pllResult)) {
-    return INTSAFE_E_ARITHMETIC_OVERFLOW;
-  }
-  return S_OK;
-}
-#endif
-#endif
+// Fix for missing IntSafe functions (LongLongAdd/LongLongSub) when building with Clang.
+// Clang does not pull in the full intsafe.h through windows.h, so zend_operators.h
+// encounters undeclared LongLongAdd/LongLongSub. Include intsafe.h explicitly.
+#include <intsafe.h>
 #endif
 
 #include <Zend/zend_modules.h>

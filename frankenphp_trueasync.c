@@ -10,13 +10,16 @@
 #include "config.h"
 #endif
 
+/* frankenphp.h must come before php.h on Windows:
+ * it defines LongLongAdd/LongLongSub for Clang before zend_operators.h needs them */
+#include "frankenphp.h"
+
 #include "php.h"
 #include "php_ini.h"
 #include "php_main.h"
 #include "SAPI.h"
 #include "Zend/zend_async_API.h"
 #include "Zend/zend_exceptions.h"
-#include "frankenphp.h"
 
 #ifndef PHP_WIN32
 #include <fcntl.h>
