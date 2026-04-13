@@ -18,8 +18,10 @@
 #include "Zend/zend_exceptions.h"
 #include "frankenphp.h"
 
+#ifndef PHP_WIN32
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 
 extern __thread uintptr_t thread_index;
 extern __thread zval *async_request_callback;
@@ -154,11 +156,35 @@ static void frankenphp_async_check_requests_callback(
 }
 
 /*
+ * Creates a poll event for the AsyncNotifier descriptor.
+ * Windows: notifier_fd is a SOCKET handle → socket-based polling.
+ * Unix:    notifier_fd is a file descriptor → fd-based polling with O_NONBLOCK.
+ */
+static inline zend_async_poll_event_t *create_notifier_poll_event(int notifier_fd)
+{
+#ifdef PHP_WIN32
+    return ZEND_ASYNC_NEW_POLL_EVENT_EX(
+        ZEND_FD_NULL, (zend_socket_t) notifier_fd, ASYNC_READABLE, sizeof(uintptr_t)
+    );
+#else
+    int flags = fcntl(notifier_fd, F_GETFL, 0);
+
+    if (flags == -1 || fcntl(notifier_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to set AsyncNotifier FD to non-blocking");
+        return NULL;
+    }
+
+    return ZEND_ASYNC_NEW_POLL_EVENT_EX(
+        (zend_file_descriptor_t) notifier_fd, 0, ASYNC_READABLE, sizeof(uintptr_t)
+    );
+#endif
+}
+
+/*
  * Registers AsyncNotifier FD with TrueAsync event loop
  */
 bool frankenphp_register_request_notifier(int notifier_fd, uintptr_t thread_index)
 {
-    int flags;
     uintptr_t *extra_data;
 
     if (notifier_fd < 0) {
@@ -166,15 +192,7 @@ bool frankenphp_register_request_notifier(int notifier_fd, uintptr_t thread_inde
         return false;
     }
 
-    flags = fcntl(notifier_fd, F_GETFL, 0);
-    if (flags == -1 || fcntl(notifier_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-        php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to set AsyncNotifier FD to non-blocking");
-        return false;
-    }
-
-    request_event = ZEND_ASYNC_NEW_POLL_EVENT_EX(
-        (zend_file_descriptor_t) notifier_fd, 0, ASYNC_READABLE, sizeof(uintptr_t)
-    );
+    request_event = create_notifier_poll_event(notifier_fd);
 
     if (UNEXPECTED(request_event == NULL)) {
         php_error(E_ERROR, "FrankenPHP TrueAsync: Failed to create TrueAsync poll event");

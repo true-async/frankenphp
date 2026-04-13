@@ -1,3 +1,5 @@
+//go:build !windows
+
 package frankenphp
 
 // #include <unistd.h>
