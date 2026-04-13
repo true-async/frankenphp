@@ -487,6 +487,11 @@ func parsePhpServer(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error)
 	// prepend routes from the 'worker match *' directives
 	routes = prependWorkerRoutes(routes, h, phpsrv, fsrv, disableFsrv)
 
+	// remove matched workers from phpsrv so they are not registered again by the *.php route
+	phpsrv.Workers = slices.DeleteFunc(phpsrv.Workers, func(w workerConfig) bool {
+		return len(w.MatchPath) > 0
+	})
+
 	// set the list of allowed path segments on which to split
 	phpsrv.SplitPath = extensions
 
