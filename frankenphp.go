@@ -159,8 +159,13 @@ func calculateMaxThreads(opt *opt) (numWorkers int, _ error) {
 
 	for i, w := range opt.workers {
 		if w.num <= 0 {
-			// https://github.com/php/frankenphp/issues/126
-			opt.workers[i].num = maxProcs
+			if w.asyncMode {
+				// async workers are reactors: one event loop per core is sufficient
+				opt.workers[i].num = runtime.GOMAXPROCS(0)
+			} else {
+				// https://github.com/php/frankenphp/issues/126
+				opt.workers[i].num = maxProcs
+			}
 		}
 		metrics.TotalWorkers(w.name, w.num)
 
