@@ -15,6 +15,11 @@
 
 #endif
 
+// php_config.h defines PHP_HAVE_BUILTIN_SADDLL_OVERFLOW and friends,
+// which zend_operators.h needs to pick the Clang builtin path instead of
+// the MSVC-only LongLongAdd/LongLongSub path.
+#include <php_config.h>
+
 #include <Zend/zend_modules.h>
 #include <Zend/zend_types.h>
 #include <stdbool.h>
