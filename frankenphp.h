@@ -15,11 +15,6 @@
 
 #endif
 
-// php_config.h defines PHP_HAVE_BUILTIN_SADDLL_OVERFLOW etc., which lets
-// zend_operators.h use Clang builtins instead of LongLongAdd/LongLongSub.
-// Must be included before any Zend headers.
-#include <main/php_config.h>
-
 #include <Zend/zend_modules.h>
 #include <Zend/zend_types.h>
 #include <stdbool.h>
