@@ -13,13 +13,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-// Enable signed integer safe arithmetic functions (LongLongAdd etc.) in intsafe.h.
-// Without this, zend_operators.h fails to compile with Clang in C mode.
-#ifndef ENABLE_INTSAFE_SIGNED_FUNCTIONS
-#define ENABLE_INTSAFE_SIGNED_FUNCTIONS
-#endif
-#include <intsafe.h>
-
 #endif
 
 #include <Zend/zend_modules.h>
