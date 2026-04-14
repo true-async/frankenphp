@@ -6,9 +6,9 @@ package frankenphp
 // #cgo unix LDFLAGS: -lphp -lm -lutil
 // #cgo linux LDFLAGS: -ldl -lresolv
 // #cgo darwin LDFLAGS: -Wl,-rpath,/usr/local/lib -liconv -ldl
-//
+import "C"
+
 // Windows CFLAGS/LDFLAGS live in cgo_windows.go (release defaults) and
 // cgo_windows_debug.go (build tag `zend_debug`). They are split so that
 // when linking against a debug PHP devel pack we can flip ZEND_DEBUG=1,
 // which changes the signatures of zend_alloc.h functions.
-import "C"
