@@ -13,12 +13,14 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+// Enable signed integer safe arithmetic functions (LongLongAdd etc.) in intsafe.h.
+// Without this, zend_operators.h fails to compile with Clang in C mode.
+#ifndef ENABLE_INTSAFE_SIGNED_FUNCTIONS
+#define ENABLE_INTSAFE_SIGNED_FUNCTIONS
 #endif
+#include <intsafe.h>
 
-// php_config.h defines PHP_HAVE_BUILTIN_SADDLL_OVERFLOW and friends,
-// which zend_operators.h needs to pick the Clang builtin path instead of
-// the MSVC-only LongLongAdd/LongLongSub path.
-#include <php_config.h>
+#endif
 
 #include <Zend/zend_modules.h>
 #include <Zend/zend_types.h>
