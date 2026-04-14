@@ -160,8 +160,14 @@ PHP_METHOD(FrankenPHP_HttpServer, onRequest)
         async_request_callback = NULL;
     }
 
-    /* Store new callback in TLS */
-    async_request_callback = emalloc(sizeof(zval));
+    /* Store new callback in TLS.
+     * Use safe_emalloc() instead of emalloc(sizeof(zval)) to bypass the
+     * zend_alloc.h __builtin_constant_p specialization path. On Windows,
+     * PHP is built with MSVC (no __builtin_constant_p) so _emalloc_16 etc.
+     * are NOT exported from php8ts.lib, but when FrankenPHP is compiled with
+     * Clang the macro routes the constant 16-byte allocation through
+     * _emalloc_16 and the link fails. _safe_emalloc is a real exported symbol. */
+    async_request_callback = safe_emalloc(1, sizeof(zval), 0);
     ZVAL_COPY(async_request_callback, callback);
 
     /* Mark this thread as async mode requested */
@@ -385,7 +391,7 @@ PHP_METHOD(FrankenPHP_Request, getQueryParams)
     char *query_copy = estrdup(query);
     free(uri);
 
-    pair = strtok_r(query_copy, "&", &saveptr);
+    pair = php_strtok_r(query_copy, "&", &saveptr);
     while (pair != NULL) {
         char *eq = strchr(pair, '=');
         if (eq) {
@@ -399,7 +405,7 @@ PHP_METHOD(FrankenPHP_Request, getQueryParams)
             frankenphp_url_decode(pair, strlen(pair));
             add_assoc_string(return_value, pair, "");
         }
-        pair = strtok_r(NULL, "&", &saveptr);
+        pair = php_strtok_r(NULL, "&", &saveptr);
     }
 
     efree(query_copy);
@@ -427,7 +433,7 @@ PHP_METHOD(FrankenPHP_Request, getCookies)
     char *copy = estrdup(cookie_header);
     free(cookie_header);
 
-    pair = strtok_r(copy, ";", &saveptr);
+    pair = php_strtok_r(copy, ";", &saveptr);
     while (pair != NULL) {
         /* Skip leading whitespace */
         while (*pair == ' ') pair++;
@@ -440,7 +446,7 @@ PHP_METHOD(FrankenPHP_Request, getCookies)
             size_t val_len = frankenphp_url_decode(val, strlen(val));
             add_assoc_stringl(return_value, key, val, val_len);
         }
-        pair = strtok_r(NULL, ";", &saveptr);
+        pair = php_strtok_r(NULL, ";", &saveptr);
     }
 
     efree(copy);
