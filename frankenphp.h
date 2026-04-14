@@ -13,11 +13,12 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-// Fix for missing IntSafe functions (LongLongAdd/LongLongSub) when building with Clang.
-// Clang does not pull in the full intsafe.h through windows.h, so zend_operators.h
-// encounters undeclared LongLongAdd/LongLongSub. Include intsafe.h explicitly.
-#include <intsafe.h>
 #endif
+
+// php_config.h defines PHP_HAVE_BUILTIN_SADDLL_OVERFLOW etc., which lets
+// zend_operators.h use Clang builtins instead of LongLongAdd/LongLongSub.
+// Must be included before any Zend headers.
+#include <main/php_config.h>
 
 #include <Zend/zend_modules.h>
 #include <Zend/zend_types.h>
