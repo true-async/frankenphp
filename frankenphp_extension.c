@@ -21,6 +21,12 @@
 #include "frankenphp.h"
 #include <pthread.h>
 
+/* PHP 8.6 removed XtOffsetOf from the public headers; fall back to the
+ * standard offsetof so the extension keeps compiling across versions. */
+#ifndef XtOffsetOf
+#define XtOffsetOf(s_type, field) offsetof(s_type, field)
+#endif
+
 /* Forward declarations for CGO functions from Go */
 extern char *go_async_get_request_method(uintptr_t thread_index, uint64_t request_id);
 extern char *go_async_get_request_uri(uintptr_t thread_index, uint64_t request_id);

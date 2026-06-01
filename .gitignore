@@ -1,6 +1,11 @@
 /caddy/frankenphp/Build
+/caddy/frankenphp/Caddyfile.test
 /caddy/frankenphp/frankenphp
+/caddy/frankenphp/frankenphp-pgo
+/profiles/regular.pgo
+/profiles/worker.pgo
 /caddy/frankenphp/frankenphp.exe
+/caddy/frankenphp/public
 /dist
 /github_conf
 /internal/testserver/testserver

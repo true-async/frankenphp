@@ -31,6 +31,7 @@ type opt struct {
 	phpIni           map[string]string
 	maxWaitTime      time.Duration
 	maxIdleTime      time.Duration
+	maxRequests      int
 	asyncMode        bool   // Enable TrueAsync mode
 	asyncEntrypoint  string // Entrypoint script for TrueAsync mode
 	asyncThreadCount int    // Number of async threads (default: 1)
@@ -167,6 +168,15 @@ func WithMaxWaitTime(maxWaitTime time.Duration) Option {
 func WithMaxIdleTime(maxIdleTime time.Duration) Option {
 	return func(o *opt) error {
 		o.maxIdleTime = maxIdleTime
+
+		return nil
+	}
+}
+
+// EXPERIMENTAL: WithMaxRequests sets the default max requests before restarting a PHP thread (0 = unlimited). Applies to regular and worker threads.
+func WithMaxRequests(maxRequests int) Option {
+	return func(o *opt) error {
+		o.maxRequests = maxRequests
 
 		return nil
 	}

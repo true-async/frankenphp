@@ -241,6 +241,8 @@ func (h *asyncWorkerThread) name() string {
 	return "Async Worker Thread: " + h.worker.name
 }
 
+func (h *asyncWorkerThread) drain() {}
+
 // go_async_worker_get_notification_fd returns the file descriptor for event loop integration.
 // Called from C to get the FD to poll for new request notifications.
 //
