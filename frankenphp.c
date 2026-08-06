@@ -471,10 +471,10 @@ static int frankenphp_worker_request_startup() {
                       sizeof(SAPI_PHP_VERSION_HEADER) - 1, 1);
     }
 
-    if (PG(output_handler) && PG(output_handler)[0]) {
+    if (PG(output_handler) && ZSTR_LEN(PG(output_handler)) > 0) {
       zval oh;
 
-      ZVAL_STRING(&oh, PG(output_handler));
+      ZVAL_STR(&oh, zend_string_dup(PG(output_handler), false));
       php_output_start_user(&oh, 0, PHP_OUTPUT_HANDLER_STDFLAGS);
       zval_ptr_dtor(&oh);
     } else if (PG(output_buffering)) {
